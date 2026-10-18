@@ -24,6 +24,7 @@ DEALINGS IN THE SOFTWARE.
 """
 
 import argparse
+import importlib.metadata
 import platform
 import sys
 from pathlib import Path
@@ -50,6 +51,11 @@ def show_version() -> None:
     )
 
     entries.append(f"- aiohttp v{aiohttp.__version__}")
+    for name in ("aiortc", "pymediasoup", "av"):
+        try:
+            entries.append(f"- {name} v{importlib.metadata.version(name)}")
+        except importlib.metadata.PackageNotFoundError:
+            entries.append(f"- {name} (not installed)")
     uname = platform.uname()
     entries.append("- system info: {0.system} {0.release} {0.version}".format(uname))
     print("\n".join(entries))

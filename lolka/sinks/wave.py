@@ -22,6 +22,7 @@ FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 DEALINGS IN THE SOFTWARE.
 """
 
+import io
 import wave
 
 from .core import Filters, Sink, default_filters
@@ -58,12 +59,16 @@ class WaveSink(Sink):
             raise WaveSinkError(
                 "Audio may only be formatted after recording is finished."
             )
-        data = audio.file
+        raw = audio.file.read()
+        data = io.BytesIO()
 
         with wave.open(data, "wb") as f:
             f.setnchannels(self.vc.decoder.CHANNELS)
             f.setsampwidth(self.vc.decoder.SAMPLE_SIZE // self.vc.decoder.CHANNELS)
             f.setframerate(self.vc.decoder.SAMPLING_RATE)
+            f.writeframes(raw)
 
         data.seek(0)
+        audio.file = data
+
         audio.on_format(self.encoding)

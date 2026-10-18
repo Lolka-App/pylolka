@@ -31,6 +31,7 @@ import collections.abc
 import datetime
 import functools
 import importlib.resources
+import importlib.util
 import io
 import itertools
 import json
@@ -1663,17 +1664,15 @@ voice_dependency_warning_emitted = False
 
 
 def get_missing_voice_dependencies() -> tuple[str, ...]:
+    """Returns the names of the packages required for voice that are not installed."""
     missing: list[str] = []
-    try:
-        import nacl.secret
-        import nacl.utils
-    except ImportError:
-        missing.append("PyNaCl")
-
-    try:
-        import davey
-    except ImportError:
-        missing.append("davey")
+    for package in ("aiortc", "pymediasoup"):
+        try:
+            found = importlib.util.find_spec(package) is not None
+        except (ImportError, ValueError):
+            found = False
+        if not found:
+            missing.append(package)
     return tuple(missing)
 
 

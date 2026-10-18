@@ -52,21 +52,8 @@ To install additional packages for speedup,  you should use ``py-cord[speed]`` i
     py -3 -m pip install -U py-cord[speed]
 
 
-To get voice support, you should use ``py-cord[voice]`` instead of ``py-cord``, e.g. ::
-
-    python3 -m pip install -U py-cord[voice]
-
-On Linux environments, installing voice requires getting the following dependencies:
-
-- `libffi <https://github.com/libffi/libffi>`_
-- `libnacl <https://github.com/saltstack/libnacl>`_
-- `python3-dev <https://packages.debian.org/python3-dev>`_
-
-For a Debian-based system, the following command will get these dependencies:
-
-.. code-block:: shell
-
-    $ apt install libffi-dev libnacl-dev python3-dev
+Voice support (WebRTC, via ``aiortc`` and ``pymediasoup``) is installed together with the library;
+no PyNaCl, libnacl or extra system packages are needed.
 
 Remember to check your permissions!
 

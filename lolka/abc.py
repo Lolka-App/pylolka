@@ -2062,8 +2062,8 @@ class Connectable(Protocol):
             The opus library has not been loaded.
         """
 
-        # import directly from _types so if the user does not have davey
-        # it won't error here
+        # import directly from _types so the voice dependencies (aiortc,
+        # pymediasoup) are only required when VoiceClient is actually used
         from .voice._types import VoiceProtocol
 
         if cls is MISSING:
