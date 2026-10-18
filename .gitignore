@@ -159,7 +159,7 @@ cython_debug/
 
 # Custom
 *.json
-!renovate.json
+!lolka/emojis.json
 *.egg-info
 .venv/
 docs/_build
@@ -197,4 +197,4 @@ remote-release.yml
 *.wav
 *.ogg
 *.ps1
-build/
+/build/
