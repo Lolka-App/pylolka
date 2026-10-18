@@ -69,7 +69,7 @@ Voice
 -----
 
 Voice works over WebRTC (lolka's voice stack), not Discord's UDP/PyNaCl/DAVE transport.
-The required dependencies (``aiortc``, ``pymediasoup``) ship with the base install — nothing extra to add.
+The required dependencies ship with the base install — nothing extra to add.
 
 The API stays py-cord-compatible — ``await channel.connect()`` returns a ``VoiceClient`` that speaks
 lolka's WebRTC voice under the hood:

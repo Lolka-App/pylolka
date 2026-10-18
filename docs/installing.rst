@@ -52,7 +52,7 @@ To install additional packages for speedup,  you should use ``py-cord[speed]`` i
     py -3 -m pip install -U py-cord[speed]
 
 
-Voice support (WebRTC, via ``aiortc`` and ``pymediasoup``) is installed together with the library;
+Voice support (WebRTC) is installed together with the library;
 no PyNaCl, libnacl or extra system packages are needed.
 
 Remember to check your permissions!
