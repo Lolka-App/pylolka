@@ -1,0 +1,152 @@
+[build-system]
+requires = [
+    "setuptools>=77.0.3,<=80.9.0",
+]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lolka.pycord"
+authors = [
+    { name = "lolka" }
+]
+description = "A Python wrapper for the lolka bot API (pycord-compatible fork)"
+readme = { content-type = "text/x-rst", file = "README.rst" }
+requires-python = ">=3.10, <3.15"
+license = "MIT"
+license-files = ["LICENSE"]
+classifiers = [
+    "Development Status :: 5 - Production/Stable",
+    "Intended Audience :: Developers",
+    "Natural Language :: English",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Internet",
+    "Topic :: Software Development :: Libraries",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Utilities",
+    "Typing :: Typed",
+]
+dynamic = ["version", "dependencies", "optional-dependencies"]
+
+[project.urls]
+Homepage = "https://github.com/Lolka-App/lolka.pycord"
+"Issue tracker" = "https://github.com/Lolka-App/lolka.pycord/issues"
+
+[tool.setuptools]
+packages = [
+    "lolka",
+    "lolka.types",
+    "lolka.sinks",
+    "lolka.ui",
+    "lolka.webhook",
+    "lolka.commands",
+    "lolka.ext.commands",
+    "lolka.ext.tasks",
+    "lolka.ext.pages",
+    "lolka.ext.bridge",
+    "lolka.bin",
+    "lolka.voice",
+    "lolka.voice.packets",
+    "lolka.voice.receive",
+    "lolka.voice.utils",
+]
+
+[tool.setuptools.package-data]
+lolka = ["emojis.json", "bin/*.dll", "py.typed"]
+
+[tool.setuptools.dynamic]
+version = { attr = "lolka._version.__version__" }
+dependencies = { file = "requirements/_.txt" }
+readme = { content-type = "text/x-rst", file = "README.rst" }
+
+[tool.setuptools.dynamic.optional-dependencies]
+docs = { file = "requirements/docs.txt" }
+speed = { file = "requirements/speed.txt" }
+voice = { file = "requirements/voice.txt" }
+
+[dependency-groups]
+dev = [
+    "pylint~=4.0.5",
+    "mypy~=2.3.0",
+    "coverage~=7.10",
+    "pre-commit==4.6.0",
+    "codespell==2.4.3",
+    "bandit==1.9.4",
+    "flake8==7.3.0",
+    "tox>=4.27.0",
+    "tox-gh>=1.5.0"
+]
+test = [
+    "pytest~=9.1.1",
+    "pytest-asyncio~=1.4.0",
+]
+[tool.black]
+target-version = ['py310', 'py311', 'py312', 'py313', 'py314']
+
+[tool.isort]
+profile = "black"
+
+[tool.mypy]
+namespace_packages = true
+install_types = true
+strict = true
+show_error_codes = true
+#allow_untyped_decorators = true
+#allow_untyped_calls = true
+ignore_errors = true
+
+[tool.pylint.main]
+extension-pkg-whitelist = [
+    "pydantic",
+    "ujson"
+]
+py-version = 3.10
+
+[tool.pylint.messages_control]
+enable = [
+    "bad-indentation",
+    "line-too-long"
+]
+disable = [
+    "protected-access",
+    "fixme"
+]
+
+[tool.pylint.format]
+indent-string = '    '
+max-line-length = 120
+
+[tool.pytest]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+
+[tool.tox]
+requires = ["tox>=4"]
+env_list = ["3.14", "3.13", "3.12", "3.11", "3.10", "3.14-novoice"]
+
+[tool.tox.env_run_base]
+description = "run unit tests"
+commands = [["pytest", { replace = "posargs", default = ["tests"], extend = true }]]
+dependency_groups = ["test"]
+extras = ["voice"]
+
+[tool.tox.env."3.14-novoice"]
+description = "run import and warning tests without the voice extra"
+commands = [[
+    "pytest",
+    { replace = "posargs", default = ["tests/voice/test_dependency_behavior.py"], extend = true }
+]]
+dependency_groups = ["test"]
+extras = []
+
+# GitHub actions
+[tool.tox.gh.python]
+"3.14" = ["3.14", "3.14-novoice"]
+"3.13" = ["3.13"]
+"3.12" = ["3.12"]
+"3.11" = ["3.11"]
+"3.10" = ["3.10"]

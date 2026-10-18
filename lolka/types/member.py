@@ -1,0 +1,92 @@
+"""
+The MIT License (MIT)
+
+Copyright (c) 2015-2021 Rapptz
+Copyright (c) 2021-present Pycord Development
+
+Permission is hereby granted, free of charge, to any person obtaining a
+copy of this software and associated documentation files (the "Software"),
+to deal in the Software without restriction, including without limitation
+the rights to use, copy, modify, merge, publish, distribute, sublicense,
+and/or sell copies of the Software, and to permit persons to whom the
+Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+DEALINGS IN THE SOFTWARE.
+"""
+
+from typing import TypedDict
+
+from typing_extensions import NotRequired
+
+from .collectibles import AvatarDecoration, Collectibles
+from .snowflake import Snowflake, SnowflakeList
+from .user import User
+
+
+class Nickname(TypedDict):
+    nick: str
+
+
+class PartialMember(TypedDict):
+    roles: SnowflakeList
+    joined_at: str
+    deaf: bool
+    mute: bool
+
+
+class Member(PartialMember, total=False):
+    avatar: str
+    banner: str
+    user: User
+    nick: str
+    premium_since: str
+    pending: bool
+    permissions: str
+    communication_disabled_until: str
+    flags: int
+    collectibles: Collectibles
+    avatar_decoration_data: AvatarDecoration
+
+
+class _OptionalMemberWithUser(PartialMember, total=False):
+    avatar: str
+    nick: str
+    premium_since: str
+    pending: bool
+    permissions: str
+    avatar_decoration_data: AvatarDecoration
+
+
+class MemberWithUser(_OptionalMemberWithUser):
+    user: User
+
+
+class UserWithMember(User, total=False):
+    member: _OptionalMemberWithUser
+
+
+class MemberUpdateEvent(TypedDict):
+    guild_id: Snowflake
+    user: User
+    roles: list[Snowflake]
+    nick: NotRequired[str | None]
+    avatar: NotRequired[str | None]
+    banner: NotRequired[str | None]
+    joined_at: NotRequired[str | None]
+    premium_since: NotRequired[str | None]
+    deaf: NotRequired[bool | None]
+    mute: NotRequired[bool | None]
+    pending: NotRequired[bool | None]
+    communication_disabled_until: NotRequired[str | None]
+    flags: NotRequired[int | None]
+    avatar_decoration_data: NotRequired[AvatarDecoration | None]
+    # collectibles: Collectibles
