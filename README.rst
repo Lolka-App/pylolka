@@ -80,17 +80,25 @@ lolka's WebRTC voice under the hood:
     vc.play(lolka.FFmpegPCMAudio("song.mp3"))
 
     # receive other participants' audio (optional):
-    def on_track(track, user_id, producer_id):
+    async def on_track(track, user_id, producer_id):
         ...  # track is an aiortc MediaStreamTrack
     vc.on_receive_track = on_track
 
     ...
     await vc.disconnect()
 
+The track passed to ``on_receive_track`` only delivers frames from the moment it was handed over and
+keeps just the latest one, so read it (``await track.recv()`` in a loop until ``MediaStreamError``)
+or call ``track.stop()`` if you do not need it. Only audio producers are consumed (video is ignored).
+
+``after`` callbacks of ``vc.play()`` run in a helper thread, like in pycord, so they may block or call
+``vc.play()`` again; use ``asyncio.run_coroutine_threadsafe(coro, vc.loop)`` to run a coroutine from them.
+
 Recording works through the usual sinks. Every participant's incoming audio is written to the sink as
-48 kHz 16-bit stereo PCM under the participant's user ID (only received audio — no silence is inserted
-between talking). The callback gets the sink first, followed by the extra arguments, and may be a
-coroutine function:
+48 kHz 16-bit stereo PCM under the participant's user ID. Only audio received after
+``start_recording()`` is written, and no silence is inserted between talking: the tracks of different
+users are not time-aligned. Both pycord callback contracts are supported. With extra arguments (or an
+``async def`` callback) it is the pycord 2.0 - 2.6 style, ``callback(sink, *args)``:
 
 .. code:: py
 
@@ -102,6 +110,24 @@ coroutine function:
     vc.start_recording(lolka.sinks.WaveSink(), finished, text_channel)
     ...
     vc.stop_recording()
+
+Without extra arguments and with a regular function it is the pycord 2.7+ style, ``callback(error)``,
+where ``error`` is the first exception raised while recording or finishing the sink (or ``None``);
+keep a reference to the sink yourself:
+
+.. code:: py
+
+    sink = lolka.sinks.WaveSink()
+
+    def finished(error):
+        if error is None:
+            print(len(sink.audio_data), "users recorded")
+
+    vc.start_recording(sink, finished)
+    ...
+    vc.stop_recording()
+
+The sink is finalized (e.g. mp3/ogg conversion through ffmpeg) in a worker thread, so the bot stays responsive.
 
 Recording and ``on_receive_track`` can be used together. Raw UDP helpers (``send_audio_packet``) are not
 available over WebRTC — use ``vc.play()`` with an audio source.
@@ -136,5 +162,6 @@ since Python resolves those by real module path rather than by the alias:
 - ``from discord.ext import commands`` → ``from lolka.ext import commands`` (same for ``bridge``, ``pages``, ``tasks``)
 - ``from discord.commands import ...`` → ``from lolka.commands import ...``
 - ``from discord.ui import ...`` → ``from lolka.ui import ...``
+- in general, ``from discord.<sub> import …`` → ``from lolka.<sub> import …`` for any submodule (``sinks``, ``voice``, ``commands``, ``ext.*``, ``ui``, …)
 
 That's it — the rest of your bot's code stays exactly as it is.
