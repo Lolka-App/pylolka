@@ -55,6 +55,7 @@ def test_imports_without_nacl_and_davey():
         "sys.modules['davey'] = None\n"
         "import lolka, lolka.voice, lolka.sinks\n"
         "assert 'nacl' not in [k for k, v in sys.modules.items() if v is not None]\n"
+        "assert 'aiortc' not in sys.modules\n"
         "print(lolka.__version__)\n"
     )
     result = subprocess.run(
@@ -503,3 +504,159 @@ async def test_voice_state_update_without_channel_tears_down():
     assert vc.session_id == "s"
     assert not vc.is_connected()
     assert conn.closed
+
+
+def _opus_available():
+    try:
+        from lolka import opus
+
+        opus.Decoder()
+    except Exception:
+        return False
+    return True
+
+
+needs_opus = pytest.mark.skipif(not _opus_available(), reason="libopus is not available")
+
+
+class _OpusSource(AudioSource):
+    def __init__(self, packets):
+        self.packets = list(packets)
+        self.cleaned = False
+
+    def read(self):
+        return self.packets.pop(0) if self.packets else b""
+
+    def is_opus(self):
+        return True
+
+    def cleanup(self):
+        self.cleaned = True
+
+
+@needs_opus
+async def test_opus_source_is_decoded_in_the_reader_and_60ms_packets_are_kept():
+    import struct
+
+    from lolka import opus
+
+    packet = opus.Encoder().encode(struct.pack("<h", 4000) * (2880 * 2), 2880)
+    assert len(opus.Decoder().decode(packet)) == FRAME_BYTES * 3
+    track = _voice_impl.SourceAudioTrack()
+    done = []
+    source = _OpusSource([packet] * 10)
+    track.set_source(source, done.append)
+    await _pump_until(track, lambda: done)
+    assert track.played_frames == 30
+    assert source.cleaned
+
+
+async def test_opus_decoder_failure_is_raised_from_play(monkeypatch):
+    from lolka import opus
+
+    def boom():
+        raise opus.OpusNotLoaded()
+
+    monkeypatch.setattr(_voice_impl._opus, "Decoder", boom)
+    vc = _make_vc()
+    with pytest.raises(opus.OpusNotLoaded):
+        vc.play(_OpusSource([b"x"]), wait_finish=True)
+    assert vc._player_future is None
+    assert not vc.is_playing()
+
+
+async def test_read_exception_calls_after_with_it_and_cleans_up():
+    class Broken(AudioSource):
+        cleaned = False
+
+        def read(self):
+            raise ValueError("boom")
+
+        def cleanup(self):
+            Broken.cleaned = True
+
+    vc = _make_vc()
+    errors = []
+    vc.play(Broken(), after=errors.append)
+    await _pump_until(vc._conn.out_track, lambda: errors)
+    assert isinstance(errors[0], ValueError)
+    assert Broken.cleaned
+    assert not vc.is_playing()
+
+
+async def test_replace_source_keeps_the_read_ahead_frames():
+    class Counter(AudioSource):
+        def __init__(self):
+            self.n = 0
+
+        def read(self):
+            self.n += 1
+            return bytes([self.n]) * FRAME_BYTES
+
+    class Wrapper(AudioSource):
+        def __init__(self, inner):
+            self.inner = inner
+
+        def read(self):
+            return self.inner.read()
+
+    track = _voice_impl.SourceAudioTrack()
+    inner = Counter()
+    track.set_source(inner)
+    await asyncio.sleep(0.2)  # the reader fills its read-ahead queue
+    seen = []
+    for _ in range(3):
+        seen.append(bytes(( await track.recv()).planes[0])[0])
+    track.replace_source(Wrapper(track.source))
+    for _ in range(40):
+        data = bytes((await track.recv()).planes[0])
+        if any(data):
+            seen.append(data[0])
+        await asyncio.sleep(0.005)
+    assert seen[0] == 1
+    gaps = [b - a for a, b in zip(seen, seen[1:])]
+    assert all(g == 1 for g in gaps[:-1]) or sum(g - 1 for g in gaps) <= 1
+    track.stop_source()
+
+
+async def test_stop_while_waiting_for_the_previous_reader_cleans_up_after_it_exits():
+    release = threading.Event()
+    events = []
+
+    class Blocking(AudioSource):
+        def read(self):
+            release.wait(5)
+            return b"\x00" * FRAME_BYTES
+
+    class Inner(AudioSource):
+        def read(self):
+            return b""
+
+        def cleanup(self):
+            events.append("cleanup")
+
+    track = _voice_impl.SourceAudioTrack()
+    track.set_source(Blocking())
+    await asyncio.sleep(0.1)
+    track.replace_source(Inner())
+    track.stop_source()
+    await asyncio.sleep(0.3)
+    assert events == []  # the old reader is still inside read()
+    release.set()
+    await asyncio.sleep(0.5)
+    assert events[:1] == ["cleanup"]  # (AudioSource.__del__ may add another)
+
+
+async def test_start_recording_right_after_stop_recording():
+    vc = _make_vc()
+    got = []
+    first, second = WaveSink(), WaveSink()
+    vc.start_recording(first, got.append)
+    vc.stop_recording()
+    vc.start_recording(second, lambda err: got.append("second"))
+    assert vc.is_recording()
+    await asyncio.sleep(0.2)
+    assert got == [None]
+    vc.stop_recording()
+    await asyncio.sleep(0.2)
+    assert got == [None, "second"]

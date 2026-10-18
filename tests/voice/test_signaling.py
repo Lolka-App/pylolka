@@ -278,3 +278,54 @@ async def test_failed_start_cleans_up(server):
         await conn.start()
     assert conn.signaling is None
     await wait_for(lambda: server.ws.closed)
+
+
+async def test_video_producers_from_get_producers_are_not_consumed(server):
+    conn, events = await make_conn(server)
+    await conn._consume("v1", 7, "video")
+    assert server.count("consume") == 0
+    assert events.received == []
+    await conn.close()
+
+
+async def test_consumer_closed_while_consume_in_flight(server):
+    server.delays["resumeConsumer"] = 0.0
+    conn, events = await make_conn(server)
+    original = conn.recv_transport.consume
+    gate = asyncio.Event()
+
+    async def slow_consume(**kw):
+        consumer = await original(**kw)
+        await gate.wait()
+        return consumer
+
+    conn.recv_transport.consume = slow_consume
+    await server.notify("newProducer", {"producerId": "p1", "userId": 7, "kind": "audio"})
+    await wait_for(lambda: conn.recv_transport.consumers)
+    await server.notify("consumerClosed", {"consumerId": "c-p1"})
+    await wait_for(lambda: "c-p1" in conn._closed_consumers)
+    gate.set()
+    await wait_for(lambda: conn.recv_transport.consumers[0].closed)
+    assert events.received == []
+    assert conn.consumers == {}
+    assert conn._closed_consumers == set()
+    await conn.close()
+
+
+async def test_kicked_during_start_is_reported_after_start(server):
+    conn, events = await make_conn(server)
+    conn._started = False
+    conn._notify_closed("kicked")
+    assert events.closed == []
+    conn._started = True
+    conn._notify_closed(conn._pending_close)
+    assert events.closed == ["kicked"]
+    await conn.close()
+
+
+async def test_reader_cancel_does_not_report_disconnect(server):
+    conn, events = await make_conn(server)
+    conn.signaling._reader.cancel()
+    await asyncio.sleep(0.1)
+    assert events.closed == []
+    await conn.close()

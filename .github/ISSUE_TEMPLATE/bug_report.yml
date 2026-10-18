@@ -6,10 +6,9 @@ body:
   - type: markdown
     attributes:
       value: >
-        Thanks for taking the time to fill out a bug. If you want real-time support,
-        consider joining our Discord at https://pycord.dev/discord instead.
+        Thanks for taking the time to fill out a bug.
 
-        Please make sure that you tested either the latest (pre-)release [currently https://pypi.org/project/py-cord/2.8.0rc1/] or master, before submitting a bug report.
+        Please make sure that you tested the latest version or master, before submitting a bug report.
 
         Please note that this form is for bugs only!
   - type: input
@@ -77,7 +76,7 @@ body:
           required: true
         - label: I have removed my token from display, if visible.
           required: true
-        - label: I have read the [Contributing Guidelines](https://github.com/Pycord-Development/pycord/blob/master/CONTRIBUTING.md).
+        - label: I have checked the [existing issues](https://github.com/Lolka-App/lolka.pycord/issues).
           required: true
   - type: textarea
     attributes:

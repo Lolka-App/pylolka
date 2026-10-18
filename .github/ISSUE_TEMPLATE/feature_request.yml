@@ -58,5 +58,5 @@ body:
       options:
         - label: I have searched the open issues for duplicates.
           required: true
-        - label: I have read the [Contributing Guidelines](https://github.com/Pycord-Development/pycord/blob/master/CONTRIBUTING.md).
+        - label: I have checked the [existing issues](https://github.com/Lolka-App/lolka.pycord/issues).
           required: true

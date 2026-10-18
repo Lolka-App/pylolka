@@ -66,10 +66,13 @@ AFTER_JOIN_TIMEOUT = 2.0
 class _End:
     """Сентинел в очереди кадров: источник закончился (или упал с ошибкой)."""
 
-    __slots__ = ("error",)
+    __slots__ = ("error", "owner")
 
-    def __init__(self, error: Optional[Exception]) -> None:
+    def __init__(self, error: Optional[Exception], owner: "_Playback") -> None:
         self.error = error
+        # очередь может переходить к следующему _Playback (replace_source): конец
+        # чужого источника не должен останавливать новый
+        self.owner = owner
 
 
 class _Playback:
@@ -85,10 +88,16 @@ class _Playback:
         source: AudioSource,
         after: Optional[Callable[[Optional[Exception]], Any]],
         wait_for: Optional["_Playback"] = None,
+        frames: Optional["queue.Queue[Any]"] = None,
     ) -> None:
+        # Декодер создаём синхронно: если libopus недоступна, OpusNotLoaded
+        # уходит вызывающему play()/set_source, а не умирает в потоке-читателе.
+        self._decoder = _opus.Decoder() if source.is_opus() else None
         self.source = source
         self.after = after
-        self.queue: "queue.Queue[Any]" = queue.Queue(maxsize=READ_AHEAD_FRAMES)
+        self.queue: "queue.Queue[Any]" = (
+            frames if frames is not None else queue.Queue(maxsize=READ_AHEAD_FRAMES)
+        )
         self.exited = threading.Event()
         self._stop = threading.Event()
         self._cleanup = True
@@ -122,32 +131,49 @@ class _Playback:
         except Exception:
             _log.exception("error while cleaning up the audio source")
 
+    def _wait_prev(self) -> bool:
+        """Дождаться выхода предыдущего читателя; ``False`` — нас остановили."""
+        prev, self._wait_for = self._wait_for, None
+        if prev is None:
+            return True
+        # Предыдущий читатель мог читать тот же канал (источник-обёртка):
+        # два потока на один пайп недопустимы, ждём его выхода.
+        while not prev.exited.wait(0.05):
+            if self._stop.is_set():
+                # cleanup не должен идти параллельно с read() старого потока
+                prev.exited.wait(AFTER_JOIN_TIMEOUT)
+                return False
+        return not self._stop.is_set()
+
+    def _put_pcm(self, pcm: bytes) -> bool:
+        """Нарезать PCM на 20-мс кадры (последний дополнить тишиной)."""
+        for i in range(0, len(pcm), FRAME_BYTES):
+            piece = bytes(pcm[i : i + FRAME_BYTES])
+            if len(piece) < FRAME_BYTES:
+                piece += b"\x00" * (FRAME_BYTES - len(piece))
+            if not self._put(piece):
+                return False
+        return True
+
     def _run(self) -> None:
-        decoder = None
         try:
-            prev, self._wait_for = self._wait_for, None
-            if prev is not None:
-                # Предыдущий читатель мог читать тот же канал (источник-обёртка):
-                # два потока на один пайп недопустимы, ждём его выхода.
-                while not prev.exited.wait(0.05):
-                    if self._stop.is_set():
-                        return
-            if self.source.is_opus():
-                decoder = _opus.Decoder()
+            if not self._wait_prev():
+                return
             while not self._stop.is_set():
                 try:
-                    chunk = self.source.read()
-                    if chunk and decoder is not None:
-                        chunk = decoder.decode(chunk)
+                    pcm = self.source.read()
+                    if pcm and self._decoder is not None:
+                        pcm = self._decoder.decode(pcm)
+                        if not pcm:
+                            continue
                 except Exception as exc:
-                    end = _End(exc)
+                    end = _End(exc, self)
                 else:
-                    if chunk:
-                        if len(chunk) < FRAME_BYTES:
-                            chunk = chunk + b"\x00" * (FRAME_BYTES - len(chunk))
-                        self._put(bytes(chunk[:FRAME_BYTES]))
+                    if pcm:
+                        if not self._put_pcm(pcm):
+                            return
                         continue
-                    end = _End(None)
+                    end = _End(None, self)
                 if self._stop.is_set():
                     return
                 # cleanup строго до after: обе стороны (after и cleanup) видят
@@ -155,8 +181,12 @@ class _Playback:
                 self._do_cleanup()
                 self._put(end)
                 return
+        except Exception as exc:
+            _log.exception("voice: reader thread failed")
+            self._do_cleanup()
+            self._put(_End(exc, self))
         finally:
-            if self._cleanup and self._stop.is_set():
+            if self._cleanup and not self._cleaned:
                 self._do_cleanup()
             self.exited.set()
 
@@ -207,15 +237,18 @@ class SourceAudioTrack(MediaStreamTrack):
 
         Без ``cleanup()`` прежнего источника (его может оборачивать новый, как в
         ``vc.source = PCMVolumeTransformer(vc.source)``), с сохранением ``after``,
-        паузы и счётчика кадров. Буфер прочитанных вперёд кадров прежнего источника
-        отбрасывается. Новый читатель стартует, только когда прежний вышел из
+        паузы и счётчика кадров. Прочитанные вперёд кадры прежнего источника доигрываются
+        (теряется максимум кадр, который читался в момент подмены). Новый читатель стартует, только когда прежний вышел из
         своего последнего ``read()``.
         """
         with self._lock:
             old = self._playback
             if old is None:
                 raise ValueError("the client is not playing anything")
-            self._playback = _Playback(source, old.after, wait_for=old)
+            # прочитанные вперёд кадры прежнего читателя переходят новому
+            self._playback = _Playback(
+                source, old.after, wait_for=old, frames=old.queue
+            )
             old.stop(cleanup=False)
 
     @property
@@ -314,7 +347,8 @@ class SourceAudioTrack(MediaStreamTrack):
             except queue.Empty:
                 item = None
             if isinstance(item, _End):
-                self._end(pb, item.error)
+                if item.owner is pb:
+                    self._end(pb, item.error)
             elif item is not None:
                 data = item
                 self._played += 1
@@ -378,6 +412,7 @@ class Signaling:
 
     async def _read_loop(self) -> None:
         assert self._ws is not None
+        cancelled = False
         try:
             async for msg in self._ws:
                 if msg.type != aiohttp.WSMsgType.TEXT:
@@ -399,6 +434,9 @@ class Signaling:
                     )
                     self._tasks.add(task)
                     task.add_done_callback(self._tasks.discard)
+        except asyncio.CancelledError:
+            cancelled = True
+            raise
         except Exception:
             if not self._closed:
                 _log.exception("сигналинг: обрыв чтения")
@@ -407,7 +445,7 @@ class Signaling:
                 if not fut.done():
                     fut.set_exception(ConnectionError("signaling closed"))
             self._pending.clear()
-            if not self._closed and self._on_disconnect is not None:
+            if not cancelled and not self._closed and self._on_disconnect is not None:
                 try:
                     self._on_disconnect()
                 except Exception:
@@ -489,6 +527,8 @@ class VoiceConnection:
         self._consumer_producers: Dict[str, str] = {}  # consumerId -> producerId
         self._consuming: set = set()
         self._closed_producers: set = set()
+        self._closed_consumers: set = set()
+        self._pending_close: Optional[str] = None
         self._started = False
         self._close_notified = False
         self._closed = False
@@ -526,6 +566,9 @@ class VoiceConnection:
                     ) from exc
             raise
         self._started = True
+        pending, self._pending_close = self._pending_close, None
+        if pending is not None:
+            self._notify_closed(pending)
 
     async def _start(self) -> None:
         self.signaling = Signaling(
@@ -660,7 +703,11 @@ class VoiceConnection:
                 kind=res["kind"],
                 rtpParameters=RtpParameters(**res["rtpParameters"]),
             )
-            if self._closed or producer_id in self._closed_producers:
+            if (
+                self._closed
+                or producer_id in self._closed_producers
+                or consumer.id in self._closed_consumers
+            ):
                 await consumer.close()
                 return
             self.consumers[producer_id] = consumer
@@ -681,6 +728,8 @@ class VoiceConnection:
         finally:
             self._consuming.discard(producer_id)
             self._closed_producers.discard(producer_id)
+            if not self._consuming:
+                self._closed_consumers.clear()
 
     async def _drop_consumer(self, producer_id: Optional[str]) -> None:
         """Producer участника закрылся: закрываем consumer, сообщаем владельцу."""
@@ -703,7 +752,12 @@ class VoiceConnection:
                 _log.exception("ошибка on_track_ended")
 
     def _notify_closed(self, reason: str) -> None:
-        if self._closed or not self._started or self._close_notified:
+        if self._closed or self._close_notified:
+            return
+        if not self._started:
+            # закрытие во время start(): сообщим владельцу, когда сессия поднимется
+            if self._pending_close is None:
+                self._pending_close = reason
             return
         self._close_notified = True
         if self._on_closed is not None:
@@ -721,9 +775,12 @@ class VoiceConnection:
         elif method == "producerClosed":
             await self._drop_consumer(data.get("producerId"))
         elif method == "consumerClosed":
-            await self._drop_consumer(
-                self._consumer_producers.get(data.get("consumerId"))
-            )
+            consumer_id = data.get("consumerId")
+            producer_id = self._consumer_producers.get(consumer_id)
+            if producer_id is None and self._consuming and consumer_id:
+                # consumer ещё создаётся (recv_transport.consume): закроем после
+                self._closed_consumers.add(consumer_id)
+            await self._drop_consumer(producer_id)
         elif method == "kicked":
             self._notify_closed("kicked")
 

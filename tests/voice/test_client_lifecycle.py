@@ -165,11 +165,45 @@ async def test_kicked_without_a_move_tears_the_client_down():
     assert not vc.is_playing()
 
 
-async def test_signaling_loss_tears_the_client_down():
-    vc, _ = make_vc()
+async def test_signaling_loss_tears_the_client_down_and_leaves_the_channel():
+    vc, guild = make_vc()
     vc._kick_grace = 0.05
+    vc._leave_wait = 0.05
     vc._conn.kick("disconnected")
     await wait_for(lambda: not vc.is_connected())
+    await wait_for(lambda: guild.states == [None])
+
+
+async def test_move_during_the_first_connect_migrates_after_start(monkeypatch):
+    vc, guild = make_vc()
+    vc._conn = None
+    vc._connected = False
+    vc._state_ready.clear()
+    vc._channel_id = 1
+
+    async def start_with_move(self):
+        self.started = True
+        await vc.on_voice_state_update(vsu(2, SimpleNamespace(id=2)))
+        await vc.on_voice_server_update(vserveru("t-room2", "ep1"))
+
+    monkeypatch.setattr(FakeConn, "start", start_with_move)
+    await vc.on_voice_state_update(vsu(1, vc.channel))
+    await vc.on_voice_server_update(vserveru("t1", "ep1"))
+    await vc.connect(reconnect=True, timeout=1.0)
+    first = vc._conn
+    await wait_for(lambda: vc._conn is not first and vc._conn.started)
+    assert first.closed
+    assert vc.is_connected()
+    assert vc.channel.id == 2
+
+
+async def test_uncached_channel_does_not_trigger_a_rebuild_on_every_state_update():
+    vc, _ = make_vc()
+    await vc.on_voice_state_update(vsu(7, None))
+    assert vc._room_changed
+    vc._room_changed = False
+    await vc.on_voice_state_update(vsu(7, None))
+    assert not vc._room_changed
 
 
 async def test_late_null_voice_state_of_the_previous_session_is_ignored():
