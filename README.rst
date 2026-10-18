@@ -1,141 +1,51 @@
-.. image:: https://raw.githubusercontent.com/Pycord-Development/pycord/master/pycord.png
-   :alt: Pycord v3
+lolka.pycord
+============
 
-Pycord is a modern, easy to use, feature-rich, and async ready API wrapper for Discord written in Python.
+**Fork of** `pycord <https://github.com/Pycord-Development/pycord>`_ **(MIT License, © 2015-2021 Rapptz, © 2021-present Pycord Development).**
 
-======
-
-.. image:: https://img.shields.io/pypi/v/py-cord.svg?style=for-the-badge&logo=pypi&color=yellowgreen&logoColor=white
-   :target: https://pypi.python.org/pypi/py-cord
-   :alt: PyPI version info
-.. image:: https://img.shields.io/pypi/pyversions/py-cord.svg?style=for-the-badge&logo=python&logoColor=white
-   :target: https://pypi.python.org/pypi/py-cord
-   :alt: PyPI supported Python versions
-.. image:: https://img.shields.io/pypi/dm/py-cord?color=blueviolet&logo=pypi&logoColor=white&style=for-the-badge
-   :target: https://pypi.python.org/pypi/py-cord
-   :alt: PyPI downloads
-.. image:: https://img.shields.io/github/v/release/Pycord-Development/pycord?include_prereleases&label=Latest%20Release&logo=github&sort=semver&style=for-the-badge&logoColor=white
-   :target: https://github.com/Pycord-Development/pycord/releases
-   :alt: Latest release
-.. image:: https://img.shields.io/discord/881207955029110855?label=discord&style=for-the-badge&logo=discord&color=5865F2&logoColor=white
-   :target: https://pycord.dev/discord
-   :alt: Discord server invite
-.. image:: https://img.shields.io/github/sponsors/Pycord-Development?style=for-the-badge
-   :target: https://github.com/sponsors/Pycord-Development
-   :alt: GitHub Sponsors
-.. image:: https://badges.crowdin.net/badge/dark/crowdin-on-light.png
-   :target: https://translations.pycord.dev/documentation/?utm_source=badge&utm_medium=referral&utm_campaign=badge-add-on
-   :alt: Crowdin | Agile localization for tech companies
-
-======
-
-Note
-----
-
-Pycord supports Python ``3.10`` - ``3.14``
-
-Key Features
-------------
-
-- Modern Pythonic API using ``async`` and ``await``.
-- Proper rate limit handling.
-- Optimised for both speed and memory usage.
-- Full application API support.
+``lolka.pycord`` (imported as ``import lolka``) is a Python wrapper for the **lolka** bot API, built on
+py-cord 2.8.1. It targets lolka by default — no manual REST/Gateway overrides needed — decodes lolka
+snowflakes, and resolves lolka CDN asset URLs. Slash commands, cogs, UI components, ``lolka.ext.commands``,
+``lolka.ext.bridge``, ``lolka.ext.pages`` and ``lolka.ext.tasks`` keep the py-cord API. See ``LICENSE`` for
+licensing (the original MIT copyrights are retained).
 
 Installing
 ----------
 
 **Python 3.10 or higher is required**
 
-To install the library without full voice support, run the following command:
-
 .. code:: sh
 
     # Linux/macOS
-    python3 -m pip install -U py-cord
+    python3 -m pip install -U lolka.pycord
 
     # Windows
-    py -3 -m pip install -U py-cord
-
-Otherwise, to get full voice support, run the following command:
-
-.. code:: sh
-
-    # Linux/macOS
-    python3 -m pip install -U "py-cord[voice]"
-
-    # Windows
-    py -3 -m pip install -U py-cord[voice]
-
-To install additional packages for speedup, run the following command:
-
-.. code:: sh
-
-    # Linux/macOS
-    python3 -m pip install -U "py-cord[speed]"
-    # Windows
-    py -3 -m pip install -U py-cord[speed]
-
-
-To install the development version, do the following:
-
-.. code:: sh
-
-    $ git clone https://github.com/Pycord-Development/pycord
-    $ cd pycord
-    $ python3 -m pip install -U .[voice]
-
-or if you do not want to clone the repository:
-
-.. code:: sh
-
-    # Linux/macOS
-    python3 -m pip install git+https://github.com/Pycord-Development/pycord
-    # Windows
-    py -3 -m pip install git+https://github.com/Pycord-Development/pycord
-
-
-Optional Packages
-~~~~~~~~~~~~~~~~~
-
-* `PyNaCl <https://pypi.org/project/PyNaCl/>`__ (for voice support)
-* `aiodns <https://pypi.org/project/aiodns/>`__, `brotlipy <https://pypi.org/project/brotlipy/>`__, `cchardet <https://pypi.org/project/cchardet/>`__ (for aiohttp speedup)
-* `msgspec <https://pypi.org/project/msgspec/>`__ (for json speedup)
-
-Please note that while installing voice support on Linux, you must install the following packages via your preferred package manager (e.g. ``apt``, ``dnf``, etc) BEFORE running the above commands:
-
-* libffi-dev (or ``libffi-devel`` on some systems)
-* python-dev (e.g. ``python3.10-dev`` for Python 3.10)
+    py -3 -m pip install -U lolka.pycord
 
 Quick Example
 -------------
 
 .. code:: py
 
-    import discord
+    import lolka
 
-    bot = discord.Bot()
+    bot = lolka.Bot()
 
     @bot.slash_command()
-    async def hello(ctx, name: str = None):
-        name = name or ctx.author.name
-        await ctx.respond(f"Hello {name}!")
-
-    @bot.user_command(name="Say Hello")
-    async def hi(ctx, user):
-        await ctx.respond(f"{ctx.author.mention} says hello to {user.name}!")
+    async def ping(ctx):
+        await ctx.respond("pong")
 
     bot.run("token")
 
-Traditional Commands Example
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Bot Example
+~~~~~~~~~~~
 
 .. code:: py
 
-    import discord
-    from discord.ext import commands
+    import lolka
+    from lolka.ext import commands
 
-    intents = discord.Intents.default()
+    intents = lolka.Intents.default()
     intents.message_content = True
     bot = commands.Bot(command_prefix=">", intents=intents)
 
@@ -145,20 +55,86 @@ Traditional Commands Example
 
     bot.run("token")
 
-You can find more code examples in the ``examples`` directory.
+Configuration
+-------------
 
-Note: Make sure you do not reveal your bot token to anyone, as it can grant access to your bot.
+The defaults point to lolka. They are read from the environment when ``lolka`` is imported,
+so set them before ``import lolka``:
 
-Useful Links
-------------
+- ``LOLKA_API_BASE`` — REST API base URL (default ``https://lolka.app/api/bot``)
+- ``LOLKA_GATEWAY`` — Gateway URL (default ``wss://lolka.app/ws/bot``)
+- ``LOLKA_CDN`` — CDN base URL for asset links (default ``https://cdn.lolka.app``)
 
-- `Documentation <https://docs.pycord.dev/en/master/index.html>`_
-- `Learn how to create Discord bots with Pycord <https://guide.pycord.dev>`_
-- `Our Official Discord Server <https://pycord.dev/discord>`_
-- `Official Discord Developers Server <https://discord.gg/discord-developers>`_
+Voice
+-----
 
-Translations
-------------
+Voice works over WebRTC (lolka's voice stack), not Discord's UDP/PyNaCl/DAVE transport.
+The required dependencies (``aiortc``, ``pymediasoup``) ship with the base install — nothing extra to add.
 
-.. image:: https://badges.awesome-crowdin.com/translation-200034237-5.png
-   :alt: Translation Status
+The API stays py-cord-compatible — ``await channel.connect()`` returns a ``VoiceClient`` that speaks
+lolka's WebRTC voice under the hood:
+
+.. code:: py
+
+    vc = await channel.connect()
+    vc.play(lolka.FFmpegPCMAudio("song.mp3"))
+
+    # receive other participants' audio (optional):
+    def on_track(track, user_id, producer_id):
+        ...  # track is an aiortc MediaStreamTrack
+    vc.on_receive_track = on_track
+
+    ...
+    await vc.disconnect()
+
+Recording works through the usual sinks. Every participant's incoming audio is written to the sink as
+48 kHz 16-bit stereo PCM under the participant's user ID (only received audio — no silence is inserted
+between talking). The callback gets the sink first, followed by the extra arguments, and may be a
+coroutine function:
+
+.. code:: py
+
+    async def finished(sink, channel):
+        files = [lolka.File(audio.file, f"{user_id}.wav") for user_id, audio in sink.audio_data.items()]
+        await channel.send("Done recording!", files=files)
+
+    vc = await channel.connect()
+    vc.start_recording(lolka.sinks.WaveSink(), finished, text_channel)
+    ...
+    vc.stop_recording()
+
+Recording and ``on_receive_track`` can be used together. Raw UDP helpers (``send_audio_packet``) are not
+available over WebRTC — use ``vc.play()`` with an audio source.
+
+Migrating from pycord
+---------------------
+
+Already have a pycord bot? You don't have to rewrite it — just alias the import:
+
+.. code:: py
+
+    import lolka as discord
+    from lolka.ext import commands
+
+    # everything below is unmodified pycord bot code
+    bot = commands.Bot(command_prefix=">", intents=discord.Intents.default())
+
+    @bot.slash_command()
+    async def ping(ctx):
+        await ctx.respond("pong")
+
+    bot.run("token")
+
+``import lolka as discord`` covers every ``discord.Whatever`` attribute access in your existing code
+(``discord.Bot``, ``discord.Intents``, ``discord.Embed``, ``discord.option``, ``discord.sinks``,
+``discord.ui`` and so on). The only lines that actually need editing are explicit submodule imports,
+since Python resolves those by real module path rather than by the alias:
+
+- ``import discord`` → ``import lolka as discord``
+- ``from discord import X`` → ``from lolka import X``
+- ``from discord import option`` → ``from lolka import option``
+- ``from discord.ext import commands`` → ``from lolka.ext import commands`` (same for ``bridge``, ``pages``, ``tasks``)
+- ``from discord.commands import ...`` → ``from lolka.commands import ...``
+- ``from discord.ui import ...`` → ``from lolka.ui import ...``
+
+That's it — the rest of your bot's code stays exactly as it is.
