@@ -660,3 +660,75 @@ async def test_start_recording_right_after_stop_recording():
     vc.stop_recording()
     await asyncio.sleep(0.2)
     assert got == [None, "second"]
+
+
+async def test_replaced_reader_chain_never_reads_in_parallel_with_a_hung_read():
+    release = threading.Event()
+
+    class Inner(AudioSource):
+        def __init__(self):
+            self.i = 0
+            self.readers = 0
+            self.overlap = False
+            self.lock = threading.Lock()
+
+        def read(self):
+            with self.lock:
+                self.readers += 1
+                self.overlap |= self.readers > 1
+            try:
+                if self.i == 1:
+                    release.wait(4)
+                self.i += 1
+                return bytes([self.i]) * FRAME_BYTES
+            finally:
+                with self.lock:
+                    self.readers -= 1
+
+    class Wrapper(AudioSource):
+        def __init__(self, inner):
+            self.inner = inner
+
+        def read(self):
+            return self.inner.read()
+
+    inner = Inner()
+    track = _voice_impl.SourceAudioTrack()
+    track.set_source(inner)
+    await asyncio.sleep(0.1)
+    track.replace_source(Wrapper(inner))
+    track.replace_source(Wrapper(inner))
+    await asyncio.sleep(_voice_impl.AFTER_JOIN_TIMEOUT + 0.6)
+    overlapped = inner.overlap
+    release.set()
+    track.stop_source()
+    await asyncio.sleep(0.3)
+    assert not overlapped
+
+
+async def test_replace_source_plays_every_frame_of_both_sources_and_calls_after_once():
+    class Counter(AudioSource):
+        def __init__(self, tag, n):
+            self.tag, self.n, self.i = tag, n, 0
+
+        def read(self):
+            if self.i >= self.n:
+                return b""
+            self.i += 1
+            return bytes([self.tag]) * FRAME_BYTES
+
+    afters = []
+    track = _voice_impl.SourceAudioTrack()
+    track.set_source(Counter(1, 3), afters.append)
+    await asyncio.sleep(0.2)  # 3 frames and the end marker of the first reader are queued
+    track.replace_source(Counter(2, 5))
+    got = []
+    for _ in range(60):
+        data = bytes((await track.recv()).planes[0])
+        if any(data):
+            got.append(data[0])
+        if afters:
+            break
+    assert got == [1] * 3 + [2] * 5
+    await asyncio.sleep(0.2)
+    assert afters == [None]

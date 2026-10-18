@@ -30,8 +30,6 @@ import io
 import time
 from types import SimpleNamespace
 
-import pytest
-
 import lolka.voice.client as voice_client_module
 from lolka.player import PCMAudio
 from lolka.voice import _voice_impl
@@ -127,6 +125,31 @@ async def test_move_to_channel_on_the_same_server_rebuilds_the_session():
     assert vc.play(PCMAudio(io.BytesIO(b"\x01\x00" * FRAME_BYTES))) is None
     assert vc.is_playing()
     vc.stop()
+
+
+async def test_migration_never_exposes_a_connection_without_a_track(monkeypatch):
+    vc, _ = make_vc()
+    old = vc._conn
+    seen = []
+    original = FakeConn.start
+
+    async def start(self):
+        seen.append(vc._conn is self and vc._conn.out_track is not None)
+        await original(self)
+
+    monkeypatch.setattr(FakeConn, "start", start)
+    real_make = vc._make_conn
+
+    def make_conn(*args, **kwargs):
+        seen.append(vc._conn is old and old.out_track is not None)
+        return real_make(*args, **kwargs)
+
+    vc._make_conn = make_conn
+    await vc.on_voice_state_update(vsu(2, SimpleNamespace(id=2)))
+    await vc.on_voice_server_update(vserveru("t-room2", "ep1"))
+    await wait_for(lambda: vc._conn is not old and vc._conn.started)
+    assert seen == [True, True]
+    assert old.out_track is None
 
 
 async def test_token_reissue_in_the_same_room_keeps_the_session():

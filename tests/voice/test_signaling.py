@@ -325,7 +325,36 @@ async def test_kicked_during_start_is_reported_after_start(server):
 
 async def test_reader_cancel_does_not_report_disconnect(server):
     conn, events = await make_conn(server)
+    await asyncio.sleep(0.05)  # let the reader start
     conn.signaling._reader.cancel()
     await asyncio.sleep(0.1)
     assert events.closed == []
+    await conn.close()
+
+
+class _ConnectingConnection(VoiceConnection):
+    """A VoiceConnection whose _start() only connects the signaling to a fake server."""
+
+    def __init__(self, server, **kwargs):
+        super().__init__("x", "t", request_timeout=2.0, **kwargs)
+        self.server = server
+
+    async def _start(self):
+        self.signaling = Signaling(
+            self.server.url,
+            self._on_notification,
+            on_disconnect=lambda: self._notify_closed("disconnected"),
+            request_timeout=2.0,
+        )
+        await self.signaling.connect()
+        await self.server.connected.wait()
+        await self.server.notify("kicked", {})
+        await asyncio.sleep(0.2)
+
+
+async def test_close_notification_during_start_is_delivered_after_start(server):
+    closed = []
+    conn = _ConnectingConnection(server, on_closed=closed.append)
+    await conn.start()
+    assert closed == ["kicked"]
     await conn.close()

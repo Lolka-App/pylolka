@@ -141,7 +141,8 @@ class _Playback:
         while not prev.exited.wait(0.05):
             if self._stop.is_set():
                 # cleanup не должен идти параллельно с read() старого потока
-                prev.exited.wait(AFTER_JOIN_TIMEOUT)
+                # (замещённый читатель ждёт без таймаута: цепочка не должна рваться)
+                prev.exited.wait(AFTER_JOIN_TIMEOUT if self._cleanup else None)
                 return False
         return not self._stop.is_set()
 
@@ -238,8 +239,9 @@ class SourceAudioTrack(MediaStreamTrack):
         Без ``cleanup()`` прежнего источника (его может оборачивать новый, как в
         ``vc.source = PCMVolumeTransformer(vc.source)``), с сохранением ``after``,
         паузы и счётчика кадров. Прочитанные вперёд кадры прежнего источника доигрываются
-        (теряется максимум кадр, который читался в момент подмены). Новый читатель стартует, только когда прежний вышел из
-        своего последнего ``read()``.
+        (теряется максимум один результат ``read()``, читавшийся в момент подмены, —
+        для 60-мс opus это 3 кадра). Новый читатель стартует, только когда прежний
+        вышел из своего последнего ``read()``.
         """
         with self._lock:
             old = self._playback

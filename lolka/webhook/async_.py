@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING, Any, Literal, NamedTuple, overload
 from urllib.parse import quote as urlquote
 
 import aiohttp
+from yarl import URL
 
 from .. import utils
 from ..asset import Asset
@@ -49,7 +50,7 @@ from ..errors import (
 )
 from ..file import VoiceMessage
 from ..flags import MessageFlags
-from ..http import Route
+from ..http import LOLKA_API_BASE, Route
 from ..message import Attachment, Message
 from ..mixins import Hashable
 from ..object import Object
@@ -1259,7 +1260,7 @@ class Webhook(BaseWebhook):
     @property
     def url(self) -> str:
         """Returns the webhook's url."""
-        return f"https://discord.com/api/webhooks/{self.id}/{self.token}"
+        return f"{URL(LOLKA_API_BASE).origin()}/api/webhooks/{self.id}/{self.token}"
 
     @classmethod
     def partial(
@@ -1346,7 +1347,7 @@ class Webhook(BaseWebhook):
             The URL is invalid.
         """
         m = re.search(
-            r"discord(?:app)?.com/api/webhooks/(?P<id>\d{15,20})/(?P<token>[\w\.\-_]{60,68})",
+            r"(?:https?://)?[^\s/]+/api/webhooks/(?P<id>[0-9]{15,20})/(?P<token>[A-Za-z0-9\.\-_]{60,})",
             url,
         )
         if m is None:

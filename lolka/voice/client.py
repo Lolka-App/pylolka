@@ -378,11 +378,12 @@ class VoiceClient(VoiceProtocol):
                 _log.info("voice server changed, migrating to endpoint=%s", endpoint)
                 # detach the track from the old session, or its close() would reset the source
                 out_track = old.out_track
-                old.out_track = None
                 conn = self._make_conn(endpoint, token, out_track)
                 # Set the new session right away: play()/stop()/is_playing() keep
-                # working with the same track while it comes up.
+                # working with the same track while it comes up; only then detach
+                # the track from the old one (threads never see a track-less conn).
                 self._conn = conn
+                old.out_track = None
                 self._drop_remote_tracks()
                 try:
                     await old.close()
@@ -437,7 +438,9 @@ class VoiceClient(VoiceProtocol):
             await self.disconnect(force=True)
             raise
         self._connected = True
-        if conn._endpoint != self._endpoint or conn._token != self._token:
+        if conn._endpoint != self._endpoint or (
+            self._room_changed and conn._token != self._token
+        ):
             # the bot was moved while the session was coming up
             self._room_changed = False
             self._moved.set()
@@ -632,8 +635,9 @@ class VoiceClient(VoiceProtocol):
 
         The finalizer, ``after`` is called after the source has been exhausted,
         stopped or an error occurred. It runs in a separate thread, *after*
-        ``source.cleanup()`` (upstream calls it the other way round), and may be
-        delayed by up to 2 seconds if ``source.read()`` hangs.
+        ``source.cleanup()`` (upstream calls it the other way round). If
+        ``source.read()`` hangs, ``after`` is called after 2 seconds, before
+        ``cleanup()``, which runs once ``read()`` returns.
 
         The audio is fed into the WebRTC send track and (re)encoded to Opus by
         aiortc, then streamed. The Opus encoder parameters (``application``,
@@ -677,6 +681,11 @@ class VoiceClient(VoiceProtocol):
                 f"after must be a callable, not {after.__class__.__name__}",
             )
 
+        conn = self._conn
+        track = conn.out_track if conn else None
+        if track is None:
+            raise ClientException("Not connected to voice.")
+
         future: asyncio.Future[Exception | None] | None = None
         if wait_finish:
             future = self.loop.create_future()
@@ -696,7 +705,7 @@ class VoiceClient(VoiceProtocol):
                     self._resolve_future(future, exc)
 
         try:
-            self._conn.out_track.set_source(source, _after)
+            track.set_source(source, _after)
         except BaseException:
             if future is not None and self._player_future is future:
                 self._player_future = None
@@ -728,12 +737,14 @@ class VoiceClient(VoiceProtocol):
 
     def is_playing(self) -> bool:
         """Indicates if we're playing audio."""
-        track = self._conn.out_track if self._conn else None
+        conn = self._conn
+        track = conn.out_track if conn else None
         return track is not None and track.is_playing
 
     def is_paused(self) -> bool:
         """Indicates if we're playing audio, but if we're paused."""
-        track = self._conn.out_track if self._conn else None
+        conn = self._conn
+        track = conn.out_track if conn else None
         return track is not None and track.is_paused
 
     def stop(self) -> None:
@@ -742,7 +753,8 @@ class VoiceClient(VoiceProtocol):
         The ``after`` callback of the stopped source is called.
         """
         future, self._player_future = self._player_future, None
-        track = self._conn.out_track if self._conn else None
+        conn = self._conn
+        track = conn.out_track if conn else None
         if track is not None:
             track.stop_source()
         if future is not None:
@@ -750,13 +762,15 @@ class VoiceClient(VoiceProtocol):
 
     def pause(self) -> None:
         """Pauses the audio playing."""
-        track = self._conn.out_track if self._conn else None
+        conn = self._conn
+        track = conn.out_track if conn else None
         if track is not None:
             track.pause()
 
     def resume(self) -> None:
         """Resumes the audio playing."""
-        track = self._conn.out_track if self._conn else None
+        conn = self._conn
+        track = conn.out_track if conn else None
         if track is not None:
             track.resume()
 
@@ -768,8 +782,16 @@ class VoiceClient(VoiceProtocol):
         The previous source is *not* cleaned up (the new one usually wraps it, e.g.
         ``vc.source = PCMVolumeTransformer(vc.source)``); the ``after`` callback and
         the paused state are kept.
+
+        Raises
+        ------
+        TypeError
+            The new source is not an :class:`AudioSource` (setter).
+        ValueError
+            The client is not playing anything (setter).
         """
-        track = self._conn.out_track if self._conn else None
+        conn = self._conn
+        track = conn.out_track if conn else None
         return track.source if track is not None else None
 
     @source.setter
@@ -777,7 +799,8 @@ class VoiceClient(VoiceProtocol):
         if not isinstance(value, AudioSource):
             raise TypeError(f"expected AudioSource, not {value.__class__.__name__}")
 
-        track = self._conn.out_track if self._conn else None
+        conn = self._conn
+        track = conn.out_track if conn else None
         if track is None or track.source is None:
             raise ValueError("the client is not playing anything")
         track.replace_source(value)
@@ -798,7 +821,8 @@ class VoiceClient(VoiceProtocol):
 
     def elapsed(self) -> datetime.timedelta:
         """Returns the elapsed time of the playing audio."""
-        track = self._conn.out_track if self._conn else None
+        conn = self._conn
+        track = conn.out_track if conn else None
         if track is not None and track.source is not None:
             return datetime.timedelta(milliseconds=track.played_frames * 20)
         return datetime.timedelta()
@@ -915,7 +939,9 @@ class VoiceClient(VoiceProtocol):
         The sink is finalized asynchronously: it is cleaned up (audio is formatted,
         off the event loop) and then the callback passed to :meth:`start_recording`
         is called, i.e. the callback arrives after this method returns. A new
-        recording can be started right away. May be called from any thread.
+        recording can be started right away when this is called from the event
+        loop. From another thread the finalization is scheduled through the loop,
+        and until it runs :meth:`start_recording` raises :exc:`ClientException`.
 
         .. versionadded:: 2.0
 

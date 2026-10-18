@@ -40,6 +40,8 @@ import weakref
 from typing import TYPE_CHECKING, Any, Literal, overload
 from urllib.parse import quote as urlquote
 
+from yarl import URL
+
 from .. import utils
 from ..channel import PartialMessageable
 from ..errors import (
@@ -49,7 +51,7 @@ from ..errors import (
     InvalidArgument,
     NotFound,
 )
-from ..http import Route
+from ..http import LOLKA_API_BASE, Route
 from ..message import Message
 from ..object import Object
 from ..threads import Thread
@@ -650,7 +652,7 @@ class SyncWebhook(BaseWebhook):
     @property
     def url(self) -> str:
         """Returns the webhook's url."""
-        return f"https://discord.com/api/webhooks/{self.id}/{self.token}"
+        return f"{URL(LOLKA_API_BASE).origin()}/api/webhooks/{self.id}/{self.token}"
 
     @classmethod
     def partial(
@@ -728,7 +730,7 @@ class SyncWebhook(BaseWebhook):
             The URL is invalid.
         """
         m = re.search(
-            r"discord(?:app)?.com/api/webhooks/(?P<id>\d{15,20})/(?P<token>[\w\.\-_]{60,68})",
+            r"(?:https?://)?[^\s/]+/api/webhooks/(?P<id>[0-9]{15,20})/(?P<token>[A-Za-z0-9\.\-_]{60,})",
             url,
         )
         if m is None:

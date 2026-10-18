@@ -93,9 +93,12 @@ or call ``track.stop()`` if you do not need it. Only audio producers are consume
 
 ``after`` callbacks of ``vc.play()`` run in a helper thread, like in pycord, so they may block or call
 ``vc.play()`` again; use ``asyncio.run_coroutine_threadsafe(coro, vc.loop)`` to run a coroutine from them.
-Unlike in pycord, ``after`` is called after ``source.cleanup()`` (not before), and it may arrive up to
-2 seconds late if the source's ``read()`` hangs. ``vc.stop_recording()`` finalizes the sink asynchronously:
-the recording callback arrives after the call returns, and a new recording can be started right away.
+Unlike in pycord, ``after`` is called after ``source.cleanup()`` (not before); if the source's ``read()``
+hangs, ``after`` is called after 2 seconds, before ``cleanup()``, which runs once ``read()`` returns.
+``vc.stop_recording()`` finalizes the sink asynchronously: the recording callback arrives after the call
+returns. A new ``start_recording`` right after ``stop_recording()`` works when called from the event loop;
+from another thread the finalization is scheduled through the loop, and until it runs ``start_recording``
+raises ``ClientException``.
 
 If the voice connection is lost (the voice server restarted, the network dropped), the client disconnects
 and leaves the channel; ``reconnect=True`` is accepted for compatibility but reconnecting is up to the bot.
