@@ -652,11 +652,13 @@ async def test_start_recording_right_after_stop_recording():
     got = []
     first, second = WaveSink(), WaveSink()
     vc.start_recording(first, got.append)
+    first.write(b"\0" * 3840, 1)
     vc.stop_recording()
     vc.start_recording(second, lambda err: got.append("second"))
     assert vc.is_recording()
     await asyncio.sleep(0.2)
     assert got == [None]
+    assert first.audio_data[1].file.read(4) == b"RIFF"
     vc.stop_recording()
     await asyncio.sleep(0.2)
     assert got == [None, "second"]

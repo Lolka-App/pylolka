@@ -55,7 +55,7 @@ class MKASink(Sink):
         MKASinkError
             Formatting the audio failed.
         """
-        if self.vc.recording:
+        if not self.finished:
             raise MKASinkError(
                 "Audio may only be formatted after recording is finished."
             )

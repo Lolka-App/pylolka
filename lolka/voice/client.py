@@ -76,7 +76,7 @@ class VoiceClient(VoiceProtocol):
     :meth:`VoiceChannel.connect`.
 
     Voice in lolka works over WebRTC (not Discord UDP/libsodium/DAVE), so no
-    PyNaCl or davey is needed; ``aiortc`` and ``pymediasoup`` are installed
+    PyNaCl or davey is needed; the WebRTC voice dependencies are installed
     together with the library. The public interface stays compatible with
     py-cord's :class:`VoiceClient`, so existing bots keep working after
     ``import lolka as discord``.
@@ -122,7 +122,7 @@ class VoiceClient(VoiceProtocol):
             from . import _voice_impl as _ms
         except ImportError as exc:
             raise RuntimeError(
-                "voice requires aiortc and pymediasoup: "
+                "voice requires the WebRTC voice dependencies: "
                 'run "pip install -U pylolka" to install them.'
             ) from exc
 

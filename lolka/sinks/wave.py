@@ -55,7 +55,7 @@ class WaveSink(Sink):
         WaveSinkError
             Formatting the audio failed.
         """
-        if self.vc.recording:
+        if not self.finished:
             raise WaveSinkError(
                 "Audio may only be formatted after recording is finished."
             )
