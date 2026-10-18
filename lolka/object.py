@@ -97,15 +97,21 @@ class Object(Hashable):
 
     @property
     def worker_id(self) -> int:
-        """Returns the worker id that made the snowflake."""
-        return (self.id & 0x3E0000) >> 17
+        """Returns the node (worker) id that made the snowflake.
+
+        Lolka layout: 4 bits of node id above 10 bits of step.
+        """
+        return (self.id >> 10) & 0xF
 
     @property
     def process_id(self) -> int:
-        """Returns the process id that made the snowflake."""
-        return (self.id & 0x1F000) >> 12
+        """Returns the process id that made the snowflake.
+
+        Lolka snowflakes have no process id, so this is always ``0``.
+        """
+        return 0
 
     @property
     def increment_id(self) -> int:
-        """Returns the increment id that made the snowflake."""
-        return self.id & 0xFFF
+        """Returns the increment (step) id that made the snowflake."""
+        return self.id & 0x3FF

@@ -124,7 +124,31 @@ __all__ = (
 
 _log = logging.getLogger(__name__)
 
-DISCORD_EPOCH = 1420070400000
+# Lolka: своя раскладка snowflake вместо Discord. Эпоха 2025-01-01 00:00:00 UTC,
+# битовый сдвиг времени = NodeBits(4)+StepBits(10) = 14 (у Discord — эпоха 2015 и сдвиг 22).
+# Имя DISCORD_EPOCH сохранено ради внутренних ссылок (значение — lolka-эпоха).
+DISCORD_EPOCH = 1735689600000
+LOLKA_SNOWFLAKE_SHIFT = 14
+
+
+def _lolka_default_avatar_index(id: int, /) -> int:
+    """FNV-1a хеш от десятичной строки id % 6 — та же формула, что в веб/мобильном клиенте
+    Lolka (client/common/ui/Avatar/utils/color.ts), чтобы дефолтная аватарка совпадала во
+    всех клиентах."""
+    h = 2166136261
+    for ch in str(id):
+        h = ((h ^ ord(ch)) * 16777619) & 0xFFFFFFFF
+    return h % 6
+
+
+def _discord_snowflake_time(id: int, /) -> datetime.datetime:
+    """Декод РЕАЛЬНОЙ Discord-раскладки (сдвиг 22, эпоха 2015-01-01). Используется ТОЛЬКО для
+    interaction ID: сервер генерит его в Discord-формате ради совместимости с ванильным
+    discord.py, поэтому декодировать created_at/expiry надо тоже по-дискордовски, а не по
+    lolka-раскладке (у которой в этом форке эпоха 2025 и сдвиг 14)."""
+    timestamp = ((id >> 22) + 1420070400000) / 1000
+    return datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc)
+
 
 try:
     with (
@@ -456,7 +480,7 @@ def oauth_url(
 
 
 def snowflake_time(id: int) -> datetime.datetime:
-    """Converts a Discord snowflake ID to a UTC-aware datetime object.
+    """Converts a lolka snowflake ID to a UTC-aware datetime object.
 
     Parameters
     ----------
@@ -468,7 +492,7 @@ def snowflake_time(id: int) -> datetime.datetime:
     :class:`datetime.datetime`
         An aware datetime in UTC representing the creation time of the snowflake.
     """
-    timestamp = ((id >> 22) + DISCORD_EPOCH) / 1000
+    timestamp = ((id >> LOLKA_SNOWFLAKE_SHIFT) + DISCORD_EPOCH) / 1000
     return datetime.datetime.fromtimestamp(timestamp, tz=datetime.timezone.utc)
 
 
@@ -487,7 +511,7 @@ def time_snowflake(dt: datetime.datetime, high: bool = False) -> int:
         A datetime object to convert to a snowflake.
         If naive, the timezone is assumed to be local time.
     high: :class:`bool`
-        Whether to set the lower 22 bit to high or low.
+        Whether to set the lower 14 bits (:data:`LOLKA_SNOWFLAKE_SHIFT`) to high or low.
 
     Returns
     -------
@@ -495,7 +519,9 @@ def time_snowflake(dt: datetime.datetime, high: bool = False) -> int:
         The snowflake representing the time given.
     """
     discord_millis = int(dt.timestamp() * 1000 - DISCORD_EPOCH)
-    return (discord_millis << 22) + (2**22 - 1 if high else 0)
+    return (discord_millis << LOLKA_SNOWFLAKE_SHIFT) + (
+        2**LOLKA_SNOWFLAKE_SHIFT - 1 if high else 0
+    )
 
 
 def find(predicate: Callable[[T], Any], seq: Iterable[T]) -> T | None:
@@ -1197,7 +1223,7 @@ def escape_mentions(text: str) -> str:
     :class:`str`
         The text with the mentions removed.
     """
-    return re.sub(r"@(everyone|here|[!&]?[0-9]{17,20})", "@\u200b\\1", text)
+    return re.sub(r"@(everyone|here|[!&]?[0-9]{15,20})", "@\u200b\\1", text)
 
 
 def raw_mentions(text: str) -> list[int]:
@@ -1489,7 +1515,9 @@ def generate_snowflake(dt: datetime.datetime | None = None) -> int:
     """
 
     dt = dt or utcnow()
-    return int(dt.timestamp() * 1000 - DISCORD_EPOCH) << 22 | 0x3FFFFF
+    return int(dt.timestamp() * 1000 - DISCORD_EPOCH) << LOLKA_SNOWFLAKE_SHIFT | (
+        (1 << LOLKA_SNOWFLAKE_SHIFT) - 1
+    )
 
 
 V = Union[Iterable[OptionChoice], Iterable[str], Iterable[int], Iterable[float]]

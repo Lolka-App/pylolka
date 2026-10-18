@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import sys
 import weakref
 from typing import (
@@ -105,6 +106,11 @@ if TYPE_CHECKING:
 
 API_VERSION: int = 10
 
+# lolka: по умолчанию ходим в lolka bot API, а не в discord.com. База без версии
+# (версия добавляется как /v{N}); переопределяется переменной окружения LOLKA_API_BASE
+# для dev/staging. Так боту не нужен ручной оверрайд Route.API_BASE_URL.
+LOLKA_API_BASE: str = os.environ.get("LOLKA_API_BASE", "https://lolka.app/api/bot").rstrip("/")
+
 
 async def parse_response(
     response: aiohttp.ClientResponse,
@@ -122,7 +128,7 @@ async def parse_response(
 
 
 class Route:
-    API_BASE_URL: str = "https://discord.com/api/v{API_VERSION}"
+    API_BASE_URL: str = f"{LOLKA_API_BASE}/v{{API_VERSION}}"
 
     def __init__(self, method: str, path: str, **parameters: Any) -> None:
         self.path: str = path

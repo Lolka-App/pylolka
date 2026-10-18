@@ -350,7 +350,9 @@ class Interaction:
     @property
     def created_at(self) -> datetime.datetime:
         """Returns the interaction's creation time in UTC."""
-        return utils.snowflake_time(self.id)
+        # Lolka: interaction ID сервер генерит в Discord-раскладке (ради совместимости с
+        # ванильными библиотеками), поэтому декодируем его по Discord-раскладке, а не по lolka.
+        return utils._discord_snowflake_time(self.id)
 
     def is_command(self) -> bool:
         """Indicates whether the interaction is an application command."""

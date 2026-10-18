@@ -36,7 +36,12 @@ from .flags import PublicUserFlags
 from .iterators import EntitlementIterator
 from .monetization import Entitlement
 from .primary_guild import PrimaryGuild
-from .utils import MISSING, _bytes_to_base64_data, snowflake_time
+from .utils import (
+    MISSING,
+    _bytes_to_base64_data,
+    _lolka_default_avatar_index,
+    snowflake_time,
+)
 
 if TYPE_CHECKING:
     from datetime import datetime
@@ -243,9 +248,11 @@ class BaseUser(_UserTag):
         """Returns the default avatar for a given user.
         This is calculated by the user's ID if they're on the new username system, otherwise their discriminator.
         """
-        eq = (self.id >> 22) if self.is_migrated else int(self.discriminator)
-        perc = 6 if self.is_migrated else 5
-        return Asset._from_default_avatar(self._state, eq % perc)
+        # Lolka: индекс дефолтной аватарки по FNV-1a от id (как в веб/мобильном клиенте),
+        # чтобы дефолт совпадал во всех клиентах. Дискриминаторов у Lolka нет.
+        return Asset._from_default_avatar(
+            self._state, _lolka_default_avatar_index(self.id)
+        )
 
     @property
     def display_avatar(self) -> Asset:

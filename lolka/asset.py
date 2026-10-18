@@ -48,6 +48,10 @@ VALID_ASSET_FORMATS = VALID_STATIC_FORMATS | {"gif"}
 
 MISSING = utils.MISSING
 
+# Lolka: базовый URL нашего CDN для системных ассетов (дефолтные аватарки).
+# Переопределяется переменной окружения LOLKA_CDN (по аналогии с LOLKA_API_BASE / LOLKA_GATEWAY).
+LOLKA_CDN: str = os.environ.get("LOLKA_CDN", "https://cdn.lolka.app").rstrip("/")
+
 
 class AssetMixin:
     url: str
@@ -166,17 +170,32 @@ class Asset(AssetMixin):
         self._animated = animated
         self._key = key
 
+    @staticmethod
+    def _is_full_url(value: object) -> bool:
+        # lolka bot API отдаёт готовый CDN-URL (cdn.lolka.app / MinIO) в полях
+        # avatar/icon/banner вместо Discord-хэша. Распознаём такой случай.
+        return isinstance(value, str) and value.startswith(("http://", "https://"))
+
+    @classmethod
+    def _lolka_url(cls, state, url: str) -> Asset:
+        # Готовый URL используем как есть (без склейки с BASE и без ?size=/формата).
+        animated = url.lower().split("?", 1)[0].endswith((".gif", ".apng"))
+        return cls(state, url=url, key=url, animated=animated)
+
     @classmethod
     def _from_default_avatar(cls, state, index: int) -> Asset:
+        # Lolka: свои дефолтные аватарки system/avatars/{0..5}.jpg вместо Discord embed/avatars.
         return cls(
             state,
-            url=f"{cls.BASE}/embed/avatars/{index}.png",
+            url=f"{LOLKA_CDN}/system/avatars/{index}.jpg",
             key=str(index),
             animated=False,
         )
 
     @classmethod
     def _from_avatar(cls, state, user_id: int, avatar: str) -> Asset:
+        if cls._is_full_url(avatar):
+            return cls._lolka_url(state, avatar)
         animated = avatar.startswith("a_")
         format = "gif" if animated else "png"
         return cls(
@@ -234,6 +253,8 @@ class Asset(AssetMixin):
     def _from_guild_avatar(
         cls, state, guild_id: int, member_id: int, avatar: str
     ) -> Asset:
+        if cls._is_full_url(avatar):
+            return cls._lolka_url(state, avatar)
         animated = avatar.startswith("a_")
         format = "gif" if animated else "png"
         return cls(
@@ -247,6 +268,8 @@ class Asset(AssetMixin):
     def _from_guild_banner(
         cls, state, guild_id: int, member_id: int, banner: str
     ) -> Asset:
+        if cls._is_full_url(banner):
+            return cls._lolka_url(state, banner)
         animated = banner.startswith("a_")
         format = "gif" if animated else "png"
         return cls(
@@ -258,6 +281,8 @@ class Asset(AssetMixin):
 
     @classmethod
     def _from_icon(cls, state, object_id: int, icon_hash: str, path: str) -> Asset:
+        if cls._is_full_url(icon_hash):
+            return cls._lolka_url(state, icon_hash)
         return cls(
             state,
             url=f"{cls.BASE}/{path}-icons/{object_id}/{icon_hash}.png?size=1024",
@@ -288,6 +313,8 @@ class Asset(AssetMixin):
 
     @classmethod
     def _from_guild_image(cls, state, guild_id: int, image: str, path: str) -> Asset:
+        if cls._is_full_url(image):
+            return cls._lolka_url(state, image)
         animated = False
         format = "png"
         if path == "banners":
@@ -303,6 +330,8 @@ class Asset(AssetMixin):
 
     @classmethod
     def _from_guild_icon(cls, state, guild_id: int, icon_hash: str) -> Asset:
+        if cls._is_full_url(icon_hash):
+            return cls._lolka_url(state, icon_hash)
         animated = icon_hash.startswith("a_")
         format = "gif" if animated else "png"
         return cls(
@@ -323,6 +352,8 @@ class Asset(AssetMixin):
 
     @classmethod
     def _from_user_banner(cls, state, user_id: int, banner_hash: str) -> Asset:
+        if cls._is_full_url(banner_hash):
+            return cls._lolka_url(state, banner_hash)
         animated = banner_hash.startswith("a_")
         format = "gif" if animated else "png"
         return cls(

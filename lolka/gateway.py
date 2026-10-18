@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import concurrent.futures
 import logging
+import os
 import sys
 import threading
 import time
@@ -269,6 +270,9 @@ class DiscordWebSocket:
         The authentication token for discord.
     """
 
+    # lolka: по умолчанию подключаемся к gateway lolka (переопределяется LOLKA_GATEWAY).
+    DEFAULT_GATEWAY = os.environ.get("LOLKA_GATEWAY", "wss://lolka.app/ws/bot")
+
     DISPATCH = 0
     HEARTBEAT = 1
     IDENTIFY = 2
@@ -350,7 +354,14 @@ class DiscordWebSocket:
 
         This is for internal use only.
         """
-        gateway = gateway or await client.http.get_gateway()
+        # lolka: адрес gateway берём из DEFAULT_GATEWAY, а не из GET /gateway; параметры
+        # те же, что формирует http.get_gateway().
+        from .http import API_VERSION  # avoid circular import (http imports gateway)
+
+        gateway = (
+            gateway
+            or f"{cls.DEFAULT_GATEWAY}?encoding=json&v={API_VERSION}&compress=zlib-stream"
+        )
         socket = await client.http.ws_connect(gateway)
         ws = cls(socket, loop=client.loop)
 

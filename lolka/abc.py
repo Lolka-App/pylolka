@@ -148,7 +148,10 @@ async def _purge_messages_helper(
     ret: list[Message] = []
     count = 0
 
-    minimum_time = int((time.time() - 14 * 24 * 60 * 60) * 1000.0 - 1420070400000) << 22
+    minimum_time = (
+        int((time.time() - 14 * 24 * 60 * 60) * 1000.0 - utils.DISCORD_EPOCH)
+        << utils.LOLKA_SNOWFLAKE_SHIFT
+    )
     strategy = channel.delete_messages if bulk else _single_delete_strategy
 
     async for message in iterator:

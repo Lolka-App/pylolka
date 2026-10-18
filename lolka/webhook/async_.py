@@ -1346,7 +1346,7 @@ class Webhook(BaseWebhook):
             The URL is invalid.
         """
         m = re.search(
-            r"discord(?:app)?.com/api/webhooks/(?P<id>\d{17,20})/(?P<token>[\w\.\-_]{60,68})",
+            r"discord(?:app)?.com/api/webhooks/(?P<id>\d{15,20})/(?P<token>[\w\.\-_]{60,68})",
             url,
         )
         if m is None:
