@@ -446,8 +446,8 @@ class DiscordWebSocket:
                 "token": self.token,
                 "properties": {
                     "os": sys.platform,
-                    "browser": "lolka.pycord",
-                    "device": "lolka.pycord",
+                    "browser": "pylolka",
+                    "device": "pylolka",
                 },
                 "compress": True,
                 "large_threshold": 250,

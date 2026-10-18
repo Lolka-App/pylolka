@@ -33,7 +33,7 @@ __all__ = ("__version__", "VersionInfo", "version_info")
 
 from typing import Literal, NamedTuple
 
-# Lolka: версия дистрибутива lolka.pycord (читается setuptools через attr),
+# Lolka: версия дистрибутива pylolka (читается setuptools через attr),
 # version_info при этом отражает версию py-cord, на которой основан форк.
 __version__ = "0.1.0"
 

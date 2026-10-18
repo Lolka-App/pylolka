@@ -9,4 +9,4 @@
 
 ## Reporting a Vulnerability
 
-Report vulnerabilities privately via a Security Advisory: https://github.com/Lolka-App/lolka.pycord/security/advisories/new
+Report vulnerabilities privately via a Security Advisory: https://github.com/Lolka-App/pylolka/security/advisories/new

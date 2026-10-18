@@ -76,7 +76,7 @@ body:
           required: true
         - label: I have removed my token from display, if visible.
           required: true
-        - label: I have checked the [existing issues](https://github.com/Lolka-App/lolka.pycord/issues).
+        - label: I have checked the [existing issues](https://github.com/Lolka-App/pylolka/issues).
           required: true
   - type: textarea
     attributes:

@@ -43,7 +43,7 @@ def show_version() -> None:
     ]
 
     version_info = lolka.version_info
-    entries.append(f"- lolka.pycord v{lolka.__version__}")
+    entries.append(f"- pylolka v{lolka.__version__}")
     entries.append(
         "- based on py-cord v{0.major}.{0.minor}.{0.micro}-{0.releaselevel}".format(
             version_info
@@ -358,7 +358,7 @@ def add_newcog_args(subparser: argparse._SubParsersAction) -> None:
 
 def parse_args() -> Tuple[argparse.ArgumentParser, argparse.Namespace]:
     parser = argparse.ArgumentParser(
-        prog="lolka", description="Tools for helping with lolka.pycord"
+        prog="lolka", description="Tools for helping with pylolka"
     )
     parser.add_argument(
         "-v", "--version", action="store_true", help="shows the library version"

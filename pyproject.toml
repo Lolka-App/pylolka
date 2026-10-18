@@ -5,7 +5,7 @@ requires = [
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "lolka.pycord"
+name = "pylolka"
 authors = [
     { name = "lolka" }
 ]
@@ -33,8 +33,8 @@ classifiers = [
 dynamic = ["version", "dependencies", "optional-dependencies"]
 
 [project.urls]
-Homepage = "https://github.com/Lolka-App/lolka.pycord"
-"Issue tracker" = "https://github.com/Lolka-App/lolka.pycord/issues"
+Homepage = "https://github.com/Lolka-App/pylolka"
+"Issue tracker" = "https://github.com/Lolka-App/pylolka/issues"
 
 [tool.setuptools]
 packages = [

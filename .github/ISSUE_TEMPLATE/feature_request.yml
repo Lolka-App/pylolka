@@ -58,5 +58,5 @@ body:
       options:
         - label: I have searched the open issues for duplicates.
           required: true
-        - label: I have checked the [existing issues](https://github.com/Lolka-App/lolka.pycord/issues).
+        - label: I have checked the [existing issues](https://github.com/Lolka-App/pylolka/issues).
           required: true

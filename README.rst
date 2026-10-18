@@ -1,9 +1,9 @@
-lolka.pycord
-============
+pylolka
+=======
 
 **Fork of** `pycord <https://github.com/Pycord-Development/pycord>`_ **(MIT License, © 2015-2021 Rapptz, © 2021-present Pycord Development).**
 
-``lolka.pycord`` (imported as ``import lolka``) is a Python wrapper for the **lolka** bot API, built on
+``pylolka`` (imported as ``import lolka``) is a Python wrapper for the **lolka** bot API, built on
 py-cord 2.8.1. It targets lolka by default — no manual REST/Gateway overrides needed — decodes lolka
 snowflakes, and resolves lolka CDN asset URLs. Slash commands, cogs, UI components, ``lolka.ext.commands``,
 ``lolka.ext.bridge``, ``lolka.ext.pages`` and ``lolka.ext.tasks`` keep the py-cord API. See ``LICENSE`` for
@@ -17,10 +17,10 @@ Installing
 .. code:: sh
 
     # Linux/macOS
-    python3 -m pip install -U lolka.pycord
+    python3 -m pip install -U pylolka
 
     # Windows
-    py -3 -m pip install -U lolka.pycord
+    py -3 -m pip install -U pylolka
 
 Quick Example
 -------------

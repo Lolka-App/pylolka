@@ -212,7 +212,7 @@ class HTTPClient:
         self.use_clock: bool = not unsync_clock
 
         user_agent = (
-            "DiscordBot (https://github.com/Lolka-App/lolka.pycord, {0}) Python/{1[0]}.{1[1]} aiohttp/{2}"
+            "DiscordBot (https://github.com/Lolka-App/pylolka, {0}) Python/{1[0]}.{1[1]} aiohttp/{2}"
         )
         self.user_agent: str = user_agent.format(
             __version__, sys.version_info, aiohttp.__version__

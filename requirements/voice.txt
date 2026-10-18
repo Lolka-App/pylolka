@@ -1,2 +1,2 @@
 # Voice (WebRTC: aiortc, pymediasoup) is part of the base requirements.
-# This extra is kept empty for compatibility with `pip install lolka.pycord[voice]`.
+# This extra is kept empty for compatibility with `pip install pylolka[voice]`.

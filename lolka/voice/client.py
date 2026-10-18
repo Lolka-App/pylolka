@@ -123,7 +123,7 @@ class VoiceClient(VoiceProtocol):
         except ImportError as exc:
             raise RuntimeError(
                 "voice requires aiortc and pymediasoup: "
-                'run "pip install -U lolka.pycord" to install them.'
+                'run "pip install -U pylolka" to install them.'
             ) from exc
 
         super().__init__(client, channel)

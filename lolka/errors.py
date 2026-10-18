@@ -430,5 +430,5 @@ class MissingVoiceDependenciesError(RuntimeError, DiscordException):
         deps = ", ".join(missing)
         super().__init__(
             f"{deps} {'is' if len(missing) == 1 else 'are'} required for voice support. "
-            'Install them with "pip install -U lolka.pycord".'
+            'Install them with "pip install -U pylolka".'
         )
