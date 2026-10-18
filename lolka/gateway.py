@@ -38,6 +38,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 import aiohttp
+from yarl import URL
 
 from . import utils
 from .activity import BaseActivity
@@ -358,10 +359,17 @@ class DiscordWebSocket:
         # те же, что формирует http.get_gateway().
         from .http import API_VERSION  # avoid circular import (http imports gateway)
 
-        gateway = (
-            gateway
-            or f"{cls.DEFAULT_GATEWAY}?encoding=json&v={API_VERSION}&compress=zlib-stream"
-        )
+        if not gateway:
+            # query params already present in DEFAULT_GATEWAY win over the defaults
+            base = URL(cls.DEFAULT_GATEWAY)
+            query = dict(base.query)
+            for key, value in (
+                ("encoding", "json"),
+                ("v", str(API_VERSION)),
+                ("compress", "zlib-stream"),
+            ):
+                query.setdefault(key, value)
+            gateway = str(base.with_query(query))
         socket = await client.http.ws_connect(gateway)
         ws = cls(socket, loop=client.loop)
 

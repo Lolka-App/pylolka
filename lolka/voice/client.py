@@ -29,7 +29,6 @@ import asyncio
 import datetime
 import inspect
 import logging
-import threading
 from typing import TYPE_CHECKING, Any, Callable, Literal, overload
 
 from lolka import opus
@@ -56,6 +55,7 @@ if TYPE_CHECKING:
     from lolka.user import ClientUser, User
 
     AfterCallback = Callable[[Exception | None], Any]
+    RecordingCallback = Callable[..., Any]
 
 _log = logging.getLogger(__name__)
 
@@ -83,9 +83,10 @@ class VoiceClient(VoiceProtocol):
 
     Warning
     -------
-    In order to use PCM based AudioSources, you must have the opus library
-    available (it is loaded automatically when it can be found). Audio is
-    (re)encoded to Opus by aiortc before it is sent.
+    In order to play Opus based AudioSources (``is_opus()`` returns ``True``) you
+    must have the libopus library available (it is loaded automatically when it
+    can be found): they are decoded to PCM first. PCM based AudioSources do not
+    need libopus, audio is encoded to Opus by aiortc before it is sent.
 
     Attributes
     ----------
@@ -101,7 +102,10 @@ class VoiceClient(VoiceProtocol):
         Optional callback ``(track, user_id, producer_id)`` invoked for every
         incoming audio track consumed from other participants. ``track`` is an
         :class:`aiortc.MediaStreamTrack`; it can be read independently of
-        :meth:`start_recording`.
+        :meth:`start_recording`. The track only delivers frames from the moment
+        it was handed over and keeps just the latest frame, so read it
+        (``await track.recv()`` in a loop until ``MediaStreamError``) or call
+        ``track.stop()`` when you are not interested in it.
     recording: :class:`bool`
         Whether a recording is in progress (see :meth:`start_recording`).
     """
@@ -140,19 +144,51 @@ class VoiceClient(VoiceProtocol):
         # migrations to a new voice server run one at a time
         self._migrate_lock: asyncio.Lock = asyncio.Lock()
         self._player_future: asyncio.Future[Exception | None] | None = None
+        self._tasks: set[asyncio.Task] = set()
+        self._request_timeout: float = 15.0
+        # The backend moves the bot between rooms by kicking it from the old SFU
+        # room and issuing a new token (VOICE_STATE_UPDATE, then
+        # VOICE_SERVER_UPDATE with the same endpoint on the same instance).
+        self._room_changed: bool = False
+        self._moved: asyncio.Event = asyncio.Event()
+        self._kick_grace: float = 5.0
+        self._disconnecting: bool = False
+        self._left: asyncio.Event = asyncio.Event()
+        self._leave_wait: float = 1.5
 
         self.on_receive_track: Callable[[Any, Any, Any], Any] | None = None
 
-        # producer_id -> (track, user_id, relay); the relay lets recording and
-        # on_receive_track read the same incoming track independently
-        self._remote_tracks: dict[str, tuple[Any, Any, Any]] = {}
+        # producer_id -> (track, user_id, relay, drain task); the relay lets the
+        # drain, recording and on_receive_track read the same incoming track
+        # independently
+        self._remote_tracks: dict[str, tuple[Any, Any, Any, asyncio.Task]] = {}
         self._record_tasks: dict[str, asyncio.Task] = {}
+        self._record_errors: list[BaseException] = []
+        self._finishing: set[asyncio.Task] = set()
         self._sink: Sink | None = None
-        self._recording_after: tuple[AfterCallback | None, tuple[Any, ...]] = (
+        self._recording_after: tuple[RecordingCallback | None, tuple[Any, ...]] = (
             None,
             (),
         )
         self.recording: bool = False
+
+    # tasks
+
+    def _spawn(self, coro: Any, name: str | None = None) -> asyncio.Task:
+        task = self.loop.create_task(coro, name=name)
+        self._tasks.add(task)
+        task.add_done_callback(self._task_done)
+        return task
+
+    def _task_done(self, task: asyncio.Task) -> None:
+        self._tasks.discard(task)
+        if task.cancelled():
+            return
+        exc = task.exception()
+        if exc is not None:
+            _log.error(
+                "unhandled error in voice task %s", task.get_name(), exc_info=exc
+            )
 
     @property
     def guild(self) -> Guild:
@@ -239,12 +275,21 @@ class VoiceClient(VoiceProtocol):
     # connection related
 
     async def on_voice_state_update(self, data: RawVoiceStateUpdateEvent) -> None:
-        self._session_id = data.session_id
         if data.channel_id is None:
+            if self._disconnecting:
+                self._left.set()
+                return
+            if not self._state_ready.is_set():
+                # a late "left the channel" of the previous session of this guild
+                return
+            self._session_id = data.session_id
             # we were disconnected from outside (kick/move/delete)
-            self.loop.create_task(self._teardown())
+            self._spawn(self._teardown(), name="voice-teardown")
             return
-        if self.channel is None or data.channel_id != self.channel.id:
+        self._session_id = data.session_id
+        if self.channel is None or data.channel_id != getattr(self.channel, "id", None):
+            if self._connected:
+                self._room_changed = True
             new_channel = data.channel
             if new_channel is not None:
                 self.channel = new_channel
@@ -256,59 +301,97 @@ class VoiceClient(VoiceProtocol):
         if not token or not endpoint:
             _log.warning("Awaiting voice server endpoint...")
             return
-        # A repeated VOICE_SERVER_UPDATE with another endpoint for an already
-        # connected client means the voice server changed (failover or the
-        # channel moved to another instance): move to it. A token change alone
-        # keeps the session (the backend reissues the token on every
+        # A repeated VOICE_SERVER_UPDATE for an already connected client means
+        # that the voice server changed (failover or the channel moved to another
+        # instance) or that the bot was moved to another room (new token for the
+        # new room, possibly on the same instance): rebuild the session. A token
+        # change alone keeps the session (the backend reissues the token on every
         # VOICE_STATE_UPDATE, e.g. on self_mute).
-        server_changed = self._connected and endpoint != self._endpoint
+        server_changed = self._connected and (
+            endpoint != self._endpoint or self._room_changed
+        )
         self._token = token
         self._endpoint = endpoint
         self._server_ready.set()
         if server_changed:
-            self.loop.create_task(self._migrate())
+            self._room_changed = False
+            self._moved.set()
+            self._spawn(self._migrate(), name="voice-migrate")
+
+    def _make_conn(
+        self, endpoint: str, token: str, out_track: Any = None
+    ) -> Any:
+        conn = self._ms.VoiceConnection(
+            endpoint,
+            token,
+            on_receive_track=self._handle_track,
+            out_track=out_track,
+            on_closed=lambda reason: self._spawn(
+                self._on_conn_closed(conn, reason), name="voice-conn-closed"
+            ),
+            on_track_ended=self._forget_producer,
+            request_timeout=self._request_timeout,
+        )
+        return conn
+
+    async def _on_conn_closed(self, conn: Any, reason: str) -> None:
+        """The voice server dropped our session (kicked / connection lost).
+
+        When the bot is being moved to another room, the new VOICE_SERVER_UPDATE
+        follows and rebuilds the session (``_migrate``); otherwise the client is
+        torn down.
+        """
+        if conn is not self._conn:
+            return
+        _log.info("voice session ended (%s)", reason)
+        try:
+            await asyncio.wait_for(self._moved.wait(), self._kick_grace)
+        except asyncio.TimeoutError:
+            pass
+        else:
+            return
+        if self._conn is conn:
+            await self._teardown()
 
     async def _migrate(self) -> None:
-        """Rebuilds the WebRTC session on the new voice server.
+        """Rebuilds the WebRTC session on the new voice server / room.
 
         The outgoing track is carried over to the new session, so the current
         playback (source, ``after`` callback, pause) is not interrupted. An
         active recording continues on the tracks of the new session.
         """
-        async with self._migrate_lock:
-            old = self._conn
-            endpoint, token = self._endpoint, self._token
-            if old is None or not self._connected or not endpoint or not token:
-                return
-            if old._endpoint == endpoint:
-                return  # already moved (events arrived in a batch)
+        try:
+            async with self._migrate_lock:
+                old = self._conn
+                endpoint, token = self._endpoint, self._token
+                if old is None or not self._connected or not endpoint or not token:
+                    return
+                if old._endpoint == endpoint and old._token == token:
+                    return  # already moved (events arrived in a batch)
 
-            _log.info("voice server changed, migrating to endpoint=%s", endpoint)
-            # detach the track from the old session, or its close() would reset the source
-            out_track = old.out_track
-            old.out_track = None
-            conn = self._ms.VoiceConnection(
-                endpoint,
-                token,
-                on_receive_track=self._handle_track,
-                out_track=out_track,
-            )
-            # Set the new session right away: play()/stop()/is_playing() keep
-            # working with the same track while it comes up.
-            self._conn = conn
-            self._drop_remote_tracks()
-            try:
-                await old.close()
-            except Exception:
-                pass
+                _log.info("voice server changed, migrating to endpoint=%s", endpoint)
+                # detach the track from the old session, or its close() would reset the source
+                out_track = old.out_track
+                old.out_track = None
+                conn = self._make_conn(endpoint, token, out_track)
+                # Set the new session right away: play()/stop()/is_playing() keep
+                # working with the same track while it comes up.
+                self._conn = conn
+                self._drop_remote_tracks()
+                try:
+                    await old.close()
+                except Exception:
+                    pass
 
-            try:
-                await conn.start()
-            except Exception:
-                if self._conn is not conn:
-                    return  # disconnected while migrating
-                _log.exception("failed to migrate to the new voice server")
-                await self.disconnect(force=True)
+                try:
+                    await conn.start()
+                except Exception:
+                    if self._conn is not conn:
+                        return  # disconnected while migrating
+                    _log.exception("failed to migrate to the new voice server")
+                    await self.disconnect(force=True)
+        finally:
+            self._moved.clear()
 
     async def connect(
         self,
@@ -331,9 +414,7 @@ class VoiceClient(VoiceProtocol):
             raise ClientException("voice server did not provide an endpoint/token")
 
         _log.info("connecting to voice endpoint=%s", self._endpoint)
-        conn = self._ms.VoiceConnection(
-            self._endpoint, self._token, on_receive_track=self._handle_track
-        )
+        conn = self._make_conn(self._endpoint, self._token)
         self._conn = conn
         try:
             await conn.start()
@@ -345,7 +426,17 @@ class VoiceClient(VoiceProtocol):
     def _handle_track(self, track: Any, user_id: Any, producer_id: Any) -> None:
         relay = self._ms.MediaRelay()
         uid = _to_int(user_id)
-        self._remote_tracks[producer_id] = (track, uid, relay)
+        old = self._remote_tracks.pop(producer_id, None)
+        if old is not None:
+            old[3].cancel()
+        # Always read the track: aiortc queues every decoded frame of a received
+        # track without limit, and the relay (unbuffered) keeps only the latest
+        # frame for the other subscribers.
+        drain = self._spawn(
+            self._drain(relay.subscribe(track, buffered=False)),
+            name=f"voice-drain: {producer_id}",
+        )
+        self._remote_tracks[producer_id] = (track, uid, relay, drain)
         track.on("ended", lambda: self._forget_track(producer_id, track))
 
         if self.recording:
@@ -353,16 +444,33 @@ class VoiceClient(VoiceProtocol):
 
         cb = self.on_receive_track
         if cb is not None:
-            result = cb(relay.subscribe(track), user_id, producer_id)
+            result = cb(relay.subscribe(track, buffered=False), user_id, producer_id)
             if inspect.isawaitable(result):
-                asyncio.ensure_future(result)
+                self._spawn(result, name=f"voice-on-receive-track: {producer_id}")
+
+    async def _drain(self, proxy: Any) -> None:
+        try:
+            await self._ms.drain_track(proxy)
+        finally:
+            proxy.stop()
 
     def _forget_track(self, producer_id: str, track: Any) -> None:
         entry = self._remote_tracks.get(producer_id)
         if entry is not None and entry[0] is track:
-            del self._remote_tracks[producer_id]
+            self._forget_producer(producer_id)
+
+    def _forget_producer(self, producer_id: str) -> None:
+        """The participant's track is gone: stop everything attached to it."""
+        entry = self._remote_tracks.pop(producer_id, None)
+        if entry is not None:
+            entry[3].cancel()
+        task = self._record_tasks.pop(producer_id, None)
+        if task is not None:
+            task.cancel()
 
     def _drop_remote_tracks(self) -> None:
+        for entry in self._remote_tracks.values():
+            entry[3].cancel()
         self._remote_tracks.clear()
         for task in list(self._record_tasks.values()):
             task.cancel()
@@ -380,8 +488,10 @@ class VoiceClient(VoiceProtocol):
 
         Disconnects this voice client from voice.
         """
+        self._disconnecting = True
         self.stop()
-        self._finish_recording()
+        await self._finish_recording()
+        await self._wait_finishing()
         conn, self._conn = self._conn, None
         self._connected = False
         try:
@@ -389,10 +499,20 @@ class VoiceClient(VoiceProtocol):
                 await conn.close()
         finally:
             self._drop_remote_tracks()
+            left = False
             try:
                 await self.channel.guild.change_voice_state(channel=None)
+                left = self._state_ready.is_set()
             except Exception:
                 pass
+            if left:
+                # The backend answers with VOICE_STATE_UPDATE(channel=null); let it
+                # arrive here, otherwise it lands in the next VoiceClient of this
+                # guild and tears it down.
+                try:
+                    await asyncio.wait_for(self._left.wait(), self._leave_wait)
+                except asyncio.TimeoutError:
+                    pass
             self.cleanup()
 
     async def move_to(
@@ -424,7 +544,8 @@ class VoiceClient(VoiceProtocol):
 
     async def _teardown(self) -> None:
         self.stop()
-        self._finish_recording()
+        await self._finish_recording()
+        await self._wait_finishing()
         conn, self._conn = self._conn, None
         self._connected = False
         if conn is not None:
@@ -437,6 +558,10 @@ class VoiceClient(VoiceProtocol):
             self.cleanup()
         except Exception:
             pass
+
+    async def _wait_finishing(self) -> None:
+        if self._finishing:
+            await asyncio.gather(*list(self._finishing), return_exceptions=True)
 
     # audio related
 
@@ -533,6 +658,9 @@ class VoiceClient(VoiceProtocol):
             future = self.loop.create_future()
             self._player_future = future
 
+        # ``_after`` runs in a helper thread, not in the event loop (like in
+        # py-cord, where it runs in the player thread): a blocking ``after`` does
+        # not freeze the bot and may call :meth:`play` again.
         def _after(exc: Exception | None) -> None:
             try:
                 if after is not None:
@@ -541,19 +669,33 @@ class VoiceClient(VoiceProtocol):
                     _log.error("Error while playing audio", exc_info=exc)
             finally:
                 if future is not None:
-                    self._set_future_result_if_pending(future, exc)
-                    if self._player_future is future:
-                        self._player_future = None
+                    self._resolve_future(future, exc)
 
         self._conn.out_track.set_source(source, _after)
         return future
 
-    @staticmethod
-    def _set_future_result_if_pending(
-        future: asyncio.Future[Any], result: Exception | None
+    def _resolve_future(
+        self, future: asyncio.Future[Any], result: Exception | None
     ) -> None:
-        if not future.done():
-            future.set_result(result)
+        """Resolves a ``wait_finish`` future from any thread."""
+
+        def resolve() -> None:
+            if not future.done():
+                future.set_result(result)
+            if self._player_future is future:
+                self._player_future = None
+
+        try:
+            running = asyncio.get_running_loop()
+        except RuntimeError:
+            running = None
+        if running is self.loop:
+            resolve()
+            return
+        try:
+            self.loop.call_soon_threadsafe(resolve)
+        except RuntimeError:
+            pass  # the loop is closed
 
     def is_playing(self) -> bool:
         """Indicates if we're playing audio."""
@@ -570,12 +712,12 @@ class VoiceClient(VoiceProtocol):
 
         The ``after`` callback of the stopped source is called.
         """
+        future, self._player_future = self._player_future, None
         track = self._conn.out_track if self._conn else None
         if track is not None:
             track.stop_source()
-        future, self._player_future = self._player_future, None
         if future is not None:
-            self._set_future_result_if_pending(future, None)
+            self._resolve_future(future, None)
 
     def pause(self) -> None:
         """Pauses the audio playing."""
@@ -594,6 +736,9 @@ class VoiceClient(VoiceProtocol):
         """The audio source being played, if playing.
 
         This property can also be used to change the audio source currently being played.
+        The previous source is *not* cleaned up (the new one usually wraps it, e.g.
+        ``vc.source = PCMVolumeTransformer(vc.source)``); the ``after`` callback and
+        the paused state are kept.
         """
         track = self._conn.out_track if self._conn else None
         return track.source if track is not None else None
@@ -606,7 +751,7 @@ class VoiceClient(VoiceProtocol):
         track = self._conn.out_track if self._conn else None
         if track is None or track.source is None:
             raise ValueError("the client is not playing anything")
-        track.set_source(value, track._after)
+        track.replace_source(value)
 
     def send_audio_packet(self, data: bytes, *, encode: bool = True) -> None:
         """Not supported: WebRTC voice has no raw packet channel.
@@ -634,7 +779,7 @@ class VoiceClient(VoiceProtocol):
     def start_recording(
         self,
         sink: Sink,
-        callback: AfterCallback | None = None,
+        callback: RecordingCallback | None = None,
         *args: Any,
         sync_start: bool = MISSING,
     ) -> None:
@@ -642,7 +787,8 @@ class VoiceClient(VoiceProtocol):
 
         Every participant's incoming WebRTC audio track is decoded to 48 kHz
         16-bit stereo PCM and written to ``sink`` under the participant's user ID.
-        Only received audio is written (no silence is inserted between talking).
+        Only audio received after this call is written, and no silence is inserted
+        between talking: the tracks of different users are not time-aligned.
 
         .. versionadded:: 2.0
 
@@ -651,11 +797,19 @@ class VoiceClient(VoiceProtocol):
         sink: :class:`~.Sink`
             A Sink in which all audio will be processed in.
         callback: Callable[..., Any]
-            A function (or coroutine function) which is called after the recording
-            has stopped and the sink was cleaned up. It receives the sink as the
-            first positional argument, followed by ``*args``.
+            Called after the recording has stopped and the sink was cleaned up
+            (the cleanup runs in a worker thread, so the event loop is not
+            blocked by e.g. ffmpeg conversion). Both py-cord contracts are
+            supported:
+
+            - if ``*args`` are passed or ``callback`` is a coroutine function
+              (py-cord 2.0 - 2.6 style, ``async def callback(sink, channel)``):
+              ``callback(sink, *args)``; a coroutine is scheduled as a task;
+            - otherwise (py-cord 2.7+ style): ``callback(error)`` where ``error``
+              is the first exception raised while recording or cleaning up the
+              sink, or ``None``.
         \*args:
-            The arguments to pass to the callback.
+            The arguments to pass to the callback (selects the first contract).
         sync_start: :class:`bool`
             Ignored; kept for compatibility.
 
@@ -676,11 +830,12 @@ class VoiceClient(VoiceProtocol):
             raise TypeError(
                 f"expected a callable for the callback, got {callback.__class__.__name__}"
             )
-        if self.is_recording():
+        if self.is_recording() or self._sink is not None:
             raise ClientException("Already recording audio")
 
         self._sink = sink
         self._recording_after = (callback, args)
+        self._record_errors = []
         self.recording = True
         sink.init(self)
         for producer_id in list(self._remote_tracks):
@@ -693,9 +848,10 @@ class VoiceClient(VoiceProtocol):
         entry = self._remote_tracks.get(producer_id)
         if sink is None or entry is None or producer_id in self._record_tasks:
             return
-        track, user_id, relay = entry
-        proxy = relay.subscribe(track)
-        self._record_tasks[producer_id] = self.loop.create_task(
+        track, user_id, relay, _ = entry
+        # unbuffered: only frames that arrive after this point are recorded
+        proxy = relay.subscribe(track, buffered=False)
+        self._record_tasks[producer_id] = self._spawn(
             self._record(proxy, sink, user_id, producer_id),
             name=f"voice-record: {producer_id}",
         )
@@ -711,8 +867,9 @@ class VoiceClient(VoiceProtocol):
             await self._ms.record_track(proxy, write, user_id)
         except asyncio.CancelledError:
             raise
-        except Exception:
+        except Exception as exc:
             _log.exception("error while recording audio of user %s", user_id)
+            self._record_errors.append(exc)
         finally:
             proxy.stop()
             if self._record_tasks.get(producer_id) is asyncio.current_task():
@@ -721,8 +878,9 @@ class VoiceClient(VoiceProtocol):
     def stop_recording(self) -> None:
         """Stops the recording of the provided ``sink``.
 
-        The sink is cleaned up (audio is formatted) and then the callback passed to
-        :meth:`start_recording` is called.
+        The sink is cleaned up (audio is formatted, off the event loop) and then
+        the callback passed to :meth:`start_recording` is called. May be called
+        from any thread.
 
         .. versionadded:: 2.0
 
@@ -733,40 +891,54 @@ class VoiceClient(VoiceProtocol):
         """
         if not self.is_recording():
             raise RecordingException("You are not recording")
+        self.recording = False  # no more writes, a second call raises
         try:
             running = asyncio.get_running_loop()
         except RuntimeError:
             running = None
         if running is self.loop:
-            self._finish_recording()
+            self._begin_finish_recording()
         else:
-            # called from another thread (e.g. the sink's time filter)
-            self.loop.call_soon_threadsafe(self._finish_recording)
+            self.loop.call_soon_threadsafe(self._begin_finish_recording)
 
     stop_listening = stop_recording
 
-    def _finish_recording(self) -> None:
+    def _begin_finish_recording(self) -> None:
+        task = self._spawn(self._finish_recording(), name="voice-finish-recording")
+        self._finishing.add(task)
+        task.add_done_callback(self._finishing.discard)
+
+    async def _finish_recording(self) -> None:
         sink = self._sink
-        if sink is None or not self.recording:
+        if sink is None:
             return
         callback, args = self._recording_after
+        errors = self._record_errors
         self.recording = False
         self._sink = None
         self._recording_after = (None, ())
-        for task in list(self._record_tasks.values()):
-            task.cancel()
+        self._record_errors = []
+        tasks = list(self._record_tasks.values())
         self._record_tasks.clear()
+        for task in tasks:
+            task.cancel()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
         try:
-            sink.cleanup()
-        except Exception:
+            await self.loop.run_in_executor(None, sink.cleanup)
+        except Exception as exc:
             _log.exception("error while cleaning up the sink")
+            errors.append(exc)
         if callback is None:
             return
         try:
-            result = callback(sink, *args)
+            if args or inspect.iscoroutinefunction(callback):
+                result = callback(sink, *args)
+            else:
+                result = callback(errors[0] if errors else None)
             if inspect.isawaitable(result):
-                asyncio.ensure_future(result, loop=self.loop)
+                self._spawn(result, name="voice-recording-callback")
         except Exception:
             _log.exception("error while calling the recording callback")
 

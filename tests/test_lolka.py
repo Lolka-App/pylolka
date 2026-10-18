@@ -112,3 +112,19 @@ def test_escape_mentions_short_ids():
 def test_package_identity():
     assert lolka.__title__ == "lolka"
     assert lolka.version_info[:3] == (2, 8, 1)
+
+
+def test_interaction_created_at_uses_discord_layout():
+    class FakeInteraction(lolka.Interaction):
+        def __init__(self):
+            self.id = 175928847299117063
+
+    assert lolka.Interaction.created_at.fget(FakeInteraction()) == datetime.datetime(
+        2016, 4, 30, 11, 18, 25, 796000, tzinfo=UTC
+    )
+
+
+def test_member_converter_is_registered_for_lolka_member():
+    from lolka.ext.commands import converter
+
+    assert converter.CONVERTER_MAPPING[lolka.Member] is converter.MemberConverter

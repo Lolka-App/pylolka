@@ -29,6 +29,7 @@ import asyncio
 import io
 import subprocess
 import sys
+import threading
 import wave
 from fractions import Fraction
 
@@ -38,7 +39,7 @@ from aiortc import MediaStreamTrack
 from aiortc.mediastreams import MediaStreamError
 
 import lolka.voice.client as voice_client_module
-from lolka.player import PCMAudio
+from lolka.player import AudioSource, PCMAudio, PCMVolumeTransformer
 from lolka.sinks import WaveSink
 from lolka.sinks.errors import RecordingException
 from lolka.utils import get_missing_voice_dependencies
@@ -66,8 +67,20 @@ def test_no_missing_voice_dependencies():
     assert get_missing_voice_dependencies() == ()
 
 
-async def _read_all(track, count):
-    return [await track.recv() for _ in range(count)]
+async def _pump_until(track, predicate, timeout=3.0):
+    """Reads frames from the track (like aiortc's sender) until ``predicate()``."""
+    deadline = asyncio.get_running_loop().time() + timeout
+    while not predicate():
+        assert asyncio.get_running_loop().time() < deadline, "timed out"
+        await track.recv()
+
+
+async def _audio_data(track, tries=200):
+    for _ in range(tries):
+        data = bytes((await track.recv()).planes[0])
+        if any(data):
+            return data
+    raise AssertionError("no audio frame arrived")
 
 
 async def test_source_track_frames_pause_and_after():
@@ -83,21 +96,20 @@ async def test_source_track_frames_pause_and_after():
     assert frame.format.name == "s16"
     assert frame.layout.name == "stereo"
     assert frame.sample_rate == 48000
-    assert bytes(frame.planes[0])[:2] == b"\x01\x00"
     assert track.is_playing
 
+    first = await _audio_data(track)
+    assert first[:2] == b"\x01\x00"
     track.pause()
     assert track.is_paused
     silent = await track.recv()
     assert not any(bytes(silent.planes[0])[:FRAME_BYTES])
-    assert track.played_frames == 1
+    played = track.played_frames
 
     track.resume()
-    await track.recv()
-    assert results == []
-    await track.recv()  # source exhausted
-    assert results == [None]
+    await _pump_until(track, lambda: results == [None])
     assert track.source is None
+    assert track.played_frames >= played
 
 
 async def test_stop_source_calls_after_once():
@@ -106,6 +118,7 @@ async def test_stop_source_calls_after_once():
     track.set_source(PCMAudio(io.BytesIO(b"\x00" * FRAME_BYTES * 5)), results.append)
     track.stop_source()
     track.stop_source()
+    await asyncio.sleep(0.2)
     assert results == [None]
 
 
@@ -129,6 +142,7 @@ def _make_vc():
     vc = voice_client_module.VoiceClient(_FakeClient(loop), channel=object())
     vc._conn = _FakeConn()
     vc._connected = True
+    vc._state_ready.set()
     return vc
 
 
@@ -140,10 +154,8 @@ async def test_play_wait_finish_resolves_future():
     )
     assert isinstance(future, asyncio.Future)
     assert vc.is_playing()
-    await vc._conn.out_track.recv()
-    assert not future.done()
-    await vc._conn.out_track.recv()
-    assert future.done() and future.result() is None
+    await _pump_until(vc._conn.out_track, future.done)
+    assert future.result() is None
     assert seen == [None]
     assert not vc.is_playing()
 
@@ -158,6 +170,7 @@ async def test_stop_resolves_wait_finish_future_and_calls_after():
     )
     vc.stop()
     assert future.done() and future.result() is None
+    await asyncio.sleep(0.2)
     assert seen == [None]
 
 
@@ -166,6 +179,115 @@ async def test_play_returns_none_without_wait_finish():
     assert vc.play(PCMAudio(io.BytesIO(b"\x00" * FRAME_BYTES))) is None
     with pytest.raises(voice_client_module.ClientException):
         vc.play(PCMAudio(io.BytesIO(b"\x00" * FRAME_BYTES)))
+
+
+class _Tracked(AudioSource):
+    def __init__(self, frames=1000):
+        self.frames = frames
+        self.cleaned = threading.Event()
+
+    def read(self):
+        if self.cleaned.is_set() or self.frames <= 0:
+            return b""
+        self.frames -= 1
+        return b"\x01\x00" * (FRAME_BYTES // 2)
+
+    def cleanup(self):
+        self.cleaned.set()
+
+
+async def test_source_setter_wraps_without_cleaning_up_the_old_source():
+    vc = _make_vc()
+    orig = _Tracked()
+    vc.play(orig)
+    track = vc._conn.out_track
+    await _audio_data(track)
+    vc.source = PCMVolumeTransformer(orig)
+    assert isinstance(vc.source, PCMVolumeTransformer)
+    await asyncio.sleep(0.2)
+    assert not orig.cleaned.is_set()
+    assert vc.is_playing()
+    assert (await _audio_data(track))[:2] == b"\x01\x00"
+    vc.stop()
+    await asyncio.sleep(0.2)
+    assert orig.cleaned.is_set()
+
+
+async def test_stop_while_paused_cleans_up_the_source():
+    vc = _make_vc()
+    first = _Tracked()
+    vc.play(first)
+    vc.pause()
+    vc.stop()
+    assert not vc.is_playing()
+    await asyncio.sleep(0.2)
+    assert first.cleaned.is_set()
+
+
+async def test_after_runs_outside_the_event_loop_thread():
+    vc = _make_vc()
+    loop_thread = threading.get_ident()
+    seen = {}
+    done = threading.Event()
+
+    def after(exc):
+        seen["thread"] = threading.get_ident()
+        done.set()
+
+    vc.play(PCMAudio(io.BytesIO(b"\x00" * FRAME_BYTES)), after=after)
+    await _pump_until(vc._conn.out_track, done.is_set)
+    assert seen["thread"] != loop_thread
+
+
+async def test_after_may_start_the_next_source_from_its_thread():
+    vc = _make_vc()
+    second_done = threading.Event()
+    second = PCMAudio(io.BytesIO(b"\x01\x00" * (FRAME_BYTES // 2) * 2))
+
+    def after_first(exc):
+        vc.play(second, after=lambda e: second_done.set())
+
+    vc.play(PCMAudio(io.BytesIO(b"\x00" * FRAME_BYTES)), after=after_first)
+    await _pump_until(vc._conn.out_track, second_done.is_set)
+
+
+async def test_after_blocking_on_the_loop_does_not_deadlock():
+    # the FAQ recipe: run a coroutine on the bot loop and wait for it in ``after``
+    vc = _make_vc()
+    done = threading.Event()
+    ran = []
+
+    async def coro():
+        ran.append(1)
+
+    def after(exc):
+        asyncio.run_coroutine_threadsafe(coro(), vc.loop).result(timeout=5)
+        done.set()
+
+    vc.play(PCMAudio(io.BytesIO(b"\x00" * FRAME_BYTES)), after=after)
+    await _pump_until(vc._conn.out_track, done.is_set)
+    assert ran == [1]
+
+
+async def test_stop_from_after_future_captured_before_stop():
+    vc = _make_vc()
+    second_future = []
+    done = threading.Event()
+
+    def after(exc):
+        second_future.append(
+            vc.play(PCMAudio(io.BytesIO(b"\x00" * FRAME_BYTES * 50)), wait_finish=True)
+        )
+        done.set()
+
+    first = vc.play(
+        PCMAudio(io.BytesIO(b"\x00" * FRAME_BYTES * 50)), after=after, wait_finish=True
+    )
+    vc.stop()
+    await asyncio.wait_for(first, 2)
+    await _pump_until(vc._conn.out_track, done.is_set)
+    assert not second_future[0].done()
+    vc.stop()
 
 
 class _FakeRemoteTrack(MediaStreamTrack):
@@ -191,14 +313,39 @@ def _frame(value: int, samples: int = 960):
     return frame
 
 
-async def test_recording_into_sink_and_callback():
+class _QueueTrack(MediaStreamTrack):
+    """Remote track fed by the test; ``None`` ends it."""
+
+    kind = "audio"
+
+    def __init__(self):
+        super().__init__()
+        self.queue = asyncio.Queue()
+
+    async def recv(self):
+        item = await self.queue.get()
+        if item is None:
+            raise MediaStreamError
+        return item
+
+
+async def _wav_frames(sink, user):
+    with wave.open(sink.audio_data[user].file, "rb") as wav:
+        assert wav.getframerate() == 48000
+        assert wav.getnchannels() == 2
+        return wav.getnframes(), wav.readframes(wav.getnframes())
+
+
+async def test_recording_has_no_audio_from_before_start():
     vc = _make_vc()
     hook_calls = []
     vc.on_receive_track = lambda track, uid, pid: hook_calls.append((track, uid, pid))
-
-    early = _FakeRemoteTrack([_frame(1), _frame(2)])
-    vc._handle_track(early, "42", "p-early")
+    remote = _QueueTrack()
+    vc._handle_track(remote, "42", "p")
     assert len(hook_calls) == 1
+    for _ in range(10):  # spoken before the recording starts
+        remote.queue.put_nowait(_frame(1))
+    await asyncio.sleep(0.1)
 
     done = []
     sink = WaveSink()
@@ -208,45 +355,122 @@ async def test_recording_into_sink_and_callback():
 
     vc.start_recording(sink, callback, "extra")
     assert vc.is_recording()
-
-    late = _FakeRemoteTrack([_frame(3)])
-    vc._handle_track(late, 43, "p-late")
-
+    for _ in range(3):
+        remote.queue.put_nowait(_frame(2))
+        await asyncio.sleep(0.02)
+    remote.queue.put_nowait(None)
     await asyncio.sleep(0.1)
     vc.stop_recording()
     assert not vc.is_recording()
-    await asyncio.sleep(0)
-
-    assert done == [(sink, ("extra",))]
-    assert set(sink.audio_data) == {42, 43}
-    for audio in sink.audio_data.values():
-        assert audio.finished
-        assert len(audio.file.getvalue()) > 0
-    with wave.open(sink.audio_data[42].file, "rb") as wav:
-        assert wav.getframerate() == 48000
-        assert wav.getnchannels() == 2
-        assert wav.getnframes() == 2 * 960
     with pytest.raises(RecordingException):
         vc.stop_recording()
+    await asyncio.sleep(0.2)
+
+    assert done == [(sink, ("extra",))]
+    assert sink.audio_data[42].finished
+    count, raw = await _wav_frames(sink, 42)
+    assert count == 3 * 960
+    assert set(raw) == {2}
+
+
+async def test_unread_remote_track_is_drained():
+    vc = _make_vc()
+    remote = _QueueTrack()
+    vc._handle_track(remote, 5, "p")
+    for _ in range(20):
+        remote.queue.put_nowait(_frame(1))
+    await asyncio.sleep(0.2)
+    assert remote.queue.empty()
 
 
 async def test_hook_track_is_readable_while_recording():
     vc = _make_vc()
     got = []
     vc.on_receive_track = lambda track, uid, pid: got.append(track)
-    remote = _FakeRemoteTrack([_frame(1), _frame(2), _frame(3)])
+    remote = _QueueTrack()
     vc._handle_track(remote, 7, "p")
     sink = WaveSink()
     vc.start_recording(sink)
     frames = []
-    while True:
-        try:
-            frames.append(await got[0].recv())
-        except MediaStreamError:
-            break
-    assert len(frames) == 3
+
+    async def read_hook():
+        while True:
+            try:
+                frames.append(await got[0].recv())
+            except MediaStreamError:
+                return
+
+    reader = asyncio.ensure_future(read_hook())
+    for i in range(5):
+        remote.queue.put_nowait(_frame(3))
+        await asyncio.sleep(0.02)
+    remote.queue.put_nowait(None)
+    await asyncio.wait_for(reader, 2)
+    assert len(frames) >= 3
     vc.stop_recording()
-    assert len(sink.audio_data[7].file.getvalue()) > 0
+    await asyncio.sleep(0.2)
+    assert len((await _wav_frames(sink, 7))[1]) > 0
+
+
+async def test_recording_callback_error_contract():
+    # py-cord 2.7+/2.8: callback(error) when no extra args are given
+    vc = _make_vc()
+    got = []
+    vc.start_recording(WaveSink(), got.append)
+    vc.stop_recording()
+    await asyncio.sleep(0.2)
+    assert got == [None]
+
+
+async def test_recording_callback_error_contract_gets_sink_cleanup_error():
+    class BadSink(WaveSink):
+        def cleanup(self):
+            raise ValueError("boom")
+
+    vc = _make_vc()
+    got = []
+    vc.start_recording(BadSink(), got.append)
+    vc.stop_recording()
+    await asyncio.sleep(0.2)
+    assert len(got) == 1 and isinstance(got[0], ValueError)
+
+
+async def test_recording_callback_legacy_contract_with_coroutine_function():
+    vc = _make_vc()
+    got = []
+
+    async def callback(sink, *args):
+        got.append((sink, args))
+
+    sink = WaveSink()
+    vc.start_recording(sink, callback)
+    vc.stop_recording()
+    await asyncio.sleep(0.2)
+    assert got == [(sink, ())]
+
+
+async def test_sink_cleanup_runs_off_the_event_loop_thread():
+    seen = []
+
+    class ThreadSink(WaveSink):
+        def cleanup(self):
+            seen.append(threading.get_ident())
+            super().cleanup()
+
+    vc = _make_vc()
+    vc.start_recording(ThreadSink())
+    vc.stop_recording()
+    await asyncio.sleep(0.2)
+    assert seen and seen[0] != threading.get_ident()
+
+
+async def test_stop_recording_from_another_thread():
+    vc = _make_vc()
+    got = []
+    vc.start_recording(WaveSink(), got.append)
+    await asyncio.get_running_loop().run_in_executor(None, vc.stop_recording)
+    await asyncio.sleep(0.2)
+    assert got == [None]
 
 
 async def test_voice_server_update_waits_for_endpoint():
