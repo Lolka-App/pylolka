@@ -352,10 +352,28 @@ class PartialMessageConverter(Converter[lolka.PartialMessage]):
             r"(?P<guild_id>[0-9]{15,20}|@me)"
             r"/(?P<channel_id>[0-9]{15,20})/(?P<message_id>[0-9]{15,20})/?$"
         )
-        match = id_regex.match(argument) or link_regex.match(argument)
+        web_host = re.sub(r"^https?://", "", lolka.utils.LOLKA_WEB, flags=re.I)
+        hosts = "|".join(
+            re.escape(h) for h in dict.fromkeys(("lolka.app", web_host.lower()))
+        )
+        lolka_link_regex = re.compile(
+            rf"(?:https?://)?(?:{hosts})/"
+            r"(?:servers/(?P<guild_id>[0-9]{15,20})|(?P<dm>me))"
+            r"/channels/(?P<channel_id>[0-9]{15,20})"
+            r"/(?P<message_id>[0-9]{15,20})/?$",
+            re.IGNORECASE,
+        )
+        match = (
+            id_regex.match(argument)
+            or link_regex.match(argument)
+            or lolka_link_regex.match(argument)
+        )
         if not match:
             raise MessageNotFound(argument)
         data = match.groupdict()
+        if data.get("dm"):
+            # Ссылка на сообщение в личке: гильдию контекста подставлять нельзя
+            data["guild_id"] = "@me"
         channel_id = data.get("channel_id")
         if channel_id is None:
             channel_id = ctx.channel and ctx.channel.id

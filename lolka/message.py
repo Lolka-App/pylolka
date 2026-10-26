@@ -672,8 +672,9 @@ class MessageReference:
 
         .. versionadded:: 1.7
         """
-        guild_id = self.guild_id if self.guild_id is not None else "@me"
-        return f"https://discord.com/channels/{guild_id}/{self.channel_id}/{self.message_id}"
+        if self.guild_id is None:
+            return f"{utils.LOLKA_WEB}/me/channels/{self.channel_id}/{self.message_id}"
+        return f"{utils.LOLKA_WEB}/servers/{self.guild_id}/channels/{self.channel_id}/{self.message_id}"
 
     def __repr__(self) -> str:
         return (
@@ -1148,6 +1149,11 @@ class Message(Hashable):
             self.reference = None
         else:
             self.reference = ref = MessageReference.with_state(state, ref)
+            # Lolka не кладёт guild_id в reply-ссылку: берём гильдию самого сообщения
+            if ref.guild_id is None and ref.channel_id == channel.id:
+                ref.guild_id = getattr(
+                    self.guild, "id", None
+                ) or utils._get_as_snowflake(data, "guild_id")
             try:
                 resolved = data["referenced_message"]
             except KeyError:
@@ -1500,8 +1506,14 @@ class Message(Hashable):
     @property
     def jump_url(self) -> str:
         """Returns a URL that allows the client to jump to this message."""
-        guild_id = getattr(self.guild, "id", "@me")
-        return f"https://discord.com/channels/{guild_id}/{self.channel.id}/{self.id}"
+        guild_id = getattr(self.guild, "id", None) or utils._get_as_snowflake(
+            getattr(self, "_raw_data", None) or {}, "guild_id"
+        )
+        if guild_id is None:
+            return f"{utils.LOLKA_WEB}/me/channels/{self.channel.id}/{self.id}"
+        return (
+            f"{utils.LOLKA_WEB}/servers/{guild_id}/channels/{self.channel.id}/{self.id}"
+        )
 
     @property
     def poll(self) -> Poll | None:

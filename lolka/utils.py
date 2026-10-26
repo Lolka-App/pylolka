@@ -36,6 +36,7 @@ import io
 import itertools
 import json
 import logging
+import os
 import re
 import sys
 import types
@@ -130,6 +131,11 @@ _log = logging.getLogger(__name__)
 # Имя DISCORD_EPOCH сохранено ради внутренних ссылок (значение — lolka-эпоха).
 DISCORD_EPOCH = 1735689600000
 LOLKA_SNOWFLAKE_SHIFT = 14
+
+# Lolka: публичные адреса веб-клиента и коротких инвайтов (для jump_url, Invite.url,
+# oauth_url). Переопределяются переменными окружения LOLKA_WEB / LOLKA_INVITE.
+LOLKA_WEB: str = (os.getenv("LOLKA_WEB") or "https://lolka.app").rstrip("/")
+LOLKA_INVITE: str = (os.getenv("LOLKA_INVITE") or "https://lolka.gg").rstrip("/")
 
 
 def _lolka_default_avatar_index(id: int, /) -> int:
@@ -464,8 +470,13 @@ def oauth_url(
     -------
     :class:`str`
         The OAuth2 URL for inviting the bot into guilds.
+
+    .. note::
+
+        The Lolka web client currently reads only ``client_id`` from this URL;
+        the other parameters are kept for compatibility.
     """
-    url = f"https://discord.com/oauth2/authorize?client_id={client_id}"
+    url = f"{LOLKA_WEB}/bot-authorize?client_id={client_id}"
     url += f"&scope={'+'.join(scopes or ('bot',))}"
     if permissions is not MISSING:
         url += f"&permissions={permissions.value}"
@@ -1059,8 +1070,19 @@ def resolve_invite(invite: Invite | str) -> str:
 
     if isinstance(invite, Invite):
         return invite.code
-    rx = r"(?:https?\:\/\/)?discord(?:\.gg|(?:app)?\.com\/invite)\/(.+)"
-    m = re.match(rx, invite)
+    hosts = "|".join(
+        re.escape(h.lower())
+        for h in dict.fromkeys(
+            (
+                "lolka.gg",
+                "lolka.app/i",
+                re.sub(r"^https?://", "", LOLKA_INVITE, flags=re.I),
+                re.sub(r"^https?://", "", LOLKA_WEB, flags=re.I) + "/i",
+            )
+        )
+    )
+    rx = rf"(?:https?://)?(?:www\.)?(?:{hosts})/([^/?#\s]+)"
+    m = re.match(rx, invite.strip(), re.I)
     if m:
         return m.group(1)
     return invite

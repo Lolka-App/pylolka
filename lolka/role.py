@@ -346,7 +346,7 @@ class RoleColours:
 
     @classmethod
     def _from_payload(cls, data: RoleColoursPayload) -> Self:
-        primary = Colour(data["primary_color"])
+        primary = Colour(data.get("primary_color") or 0)
         secondary = (
             Colour(data["secondary_color"]) if data.get("secondary_color") else None
         )
@@ -558,8 +558,10 @@ class Role(Hashable):
         self.name: str = data["name"]
         self._permissions: int = int(data.get("permissions", 0))
         self.position: int = data.get("position", 0)
-        self._colour: int = data.get("color", 0)
-        self.colours: RoleColours = RoleColours._from_payload(data["colors"])
+        self._colour: int = data.get("color") or 0
+        self.colours: RoleColours = RoleColours._from_payload(
+            data.get("colors") or {"primary_color": data.get("color") or 0}
+        )
         self.hoist: bool = data.get("hoist", False)
         self.managed: bool = data.get("managed", False)
         self.mentionable: bool = data.get("mentionable", False)

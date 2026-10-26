@@ -45,7 +45,7 @@ from .file import File
 from .mixins import Hashable
 from .object import Object
 from .role import Role
-from .utils import _get_as_snowflake, parse_time, snowflake_time
+from .utils import LOLKA_INVITE, _get_as_snowflake, parse_time, snowflake_time
 
 __all__ = (
     "PartialInviteChannel",
@@ -533,7 +533,7 @@ class Invite(Hashable):
         "roles",
     )
 
-    BASE = "https://discord.gg"
+    BASE = LOLKA_INVITE
 
     def __init__(
         self,

@@ -250,8 +250,11 @@ class ScheduledEvent(Hashable):
 
     @property
     def url(self) -> str:
-        """The url to reference the scheduled event."""
-        return f"https://discord.com/events/{self.guild.id}/{self.id}"
+        """The url to reference the scheduled event.
+
+        Lolka has no scheduled event pages, so the link leads to the guild.
+        """
+        return f"{utils.LOLKA_WEB}/servers/{self.guild.id}"
 
     @property
     def cover(self) -> Asset | None:

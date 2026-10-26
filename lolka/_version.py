@@ -35,7 +35,7 @@ from typing import Literal, NamedTuple
 
 # Lolka: версия дистрибутива pylolka (читается setuptools через attr),
 # version_info при этом отражает версию py-cord, на которой основан форк.
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 
 class AdvancedVersionInfo(TypedDict):

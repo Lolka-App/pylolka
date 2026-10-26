@@ -402,6 +402,14 @@ class Member(lolka.abc.Messageable, _UserTag):
         self._roles = utils.SnowflakeList(map(int, data["roles"]))
         self.nick = data.get("nick", None)
         self.pending = data.get("pending", False)
+        # Lolka: серверный профиль приходит в payload сообщения; обновляем только
+        # то, что реально прислали, иначе сохраняем уже известные значения.
+        if "avatar" in data:
+            self._avatar = data["avatar"]
+        if "banner" in data:
+            self._banner = data["banner"]
+        if "avatar_decoration_data" in data:
+            self._avatar_decoration = data["avatar_decoration_data"]
 
     @classmethod
     def _try_upgrade(

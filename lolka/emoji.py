@@ -30,7 +30,12 @@ from typing import TYPE_CHECKING, Any, Iterator, Literal
 from .asset import Asset, AssetMixin
 from .partial_emoji import PartialEmoji, _EmojiTag
 from .user import User
-from .utils import MISSING, SnowflakeList, snowflake_time
+from .utils import (
+    LOLKA_SNOWFLAKE_SHIFT,
+    MISSING,
+    SnowflakeList,
+    snowflake_time,
+)
 
 __all__ = (
     "Emoji",
@@ -96,7 +101,7 @@ class BaseEmoji(_EmojiTag, AssetMixin):
         return isinstance(other, _EmojiTag) and self.id == other.id
 
     def __hash__(self) -> int:
-        return self.id >> 22
+        return self.id >> LOLKA_SNOWFLAKE_SHIFT
 
     @property
     def created_at(self) -> datetime:
@@ -106,10 +111,7 @@ class BaseEmoji(_EmojiTag, AssetMixin):
     @property
     def url(self) -> str:
         """Returns the URL of the emoji."""
-        url = f"{Asset.BASE}/emojis/{self.id}.{self.extension}"
-        if self.animated:
-            url += "?animated=true"
-        return url
+        return f"{Asset.BASE}/emojis/{self.id}.webp"
 
     @property
     def mention(self) -> str:
@@ -124,7 +126,7 @@ class BaseEmoji(_EmojiTag, AssetMixin):
 
         .. versionadded:: 2.7.1
         """
-        return "webp" if self.animated else "png"
+        return "webp"
 
 
 class GuildEmoji(BaseEmoji):

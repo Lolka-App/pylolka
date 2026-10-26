@@ -835,7 +835,7 @@ class Guild(Hashable):
 
         .. versionadded:: 2.0
         """
-        return f"https://discord.com/channels/{self.id}"
+        return f"{utils.LOLKA_WEB}/servers/{self.id}"
 
     @property
     def large(self) -> bool:

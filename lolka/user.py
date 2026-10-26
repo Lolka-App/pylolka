@@ -26,9 +26,11 @@ DEALINGS IN THE SOFTWARE.
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, TypeVar
+from urllib.parse import quote
 
 import lolka.abc
 
+from . import utils
 from .asset import Asset
 from .collectibles import Collectibles, Nameplate
 from .colour import Colour
@@ -37,6 +39,7 @@ from .iterators import EntitlementIterator
 from .monetization import Entitlement
 from .primary_guild import PrimaryGuild
 from .utils import (
+    LOLKA_SNOWFLAKE_SHIFT,
     MISSING,
     _bytes_to_base64_data,
     _lolka_default_avatar_index,
@@ -143,7 +146,7 @@ class BaseUser(_UserTag):
         return isinstance(other, _UserTag) and other.id == self.id
 
     def __hash__(self) -> int:
-        return self.id >> 22
+        return self.id >> LOLKA_SNOWFLAKE_SHIFT
 
     def _update(self, data: UserPayload) -> None:
         self.name = data["username"]
@@ -225,7 +228,7 @@ class BaseUser(_UserTag):
 
         .. versionadded:: 2.0
         """
-        return f"https://discord.com/users/{self.id}"
+        return f"{utils.LOLKA_WEB}/@{quote(self.name, safe='')}"
 
     @property
     def public_flags(self) -> PublicUserFlags:

@@ -240,7 +240,7 @@ class PrivilegedIntentsRequired(ClientException):
     """Exception that's raised when the gateway is requesting privileged intents, but
     they're not ticked in the developer page yet.
 
-    Go to https://discord.com/developers/applications/ and enable the intents
+    Go to https://lolka.app/developers/portal and enable the intents
     that are required. Currently, these are as follows:
 
     - :attr:`Intents.members`
@@ -255,14 +255,16 @@ class PrivilegedIntentsRequired(ClientException):
 
     def __init__(self, shard_id: int | None):
         self.shard_id: int | None = shard_id
+        from .utils import LOLKA_WEB
+
         msg = (
             "Shard ID %s is requesting privileged intents that have not been explicitly"
             " enabled in the developer portal. It is recommended to go to"
-            " https://discord.com/developers/applications/ and explicitly enable the"
+            " %s/developers/portal and explicitly enable the"
             " privileged intents within your application's page. If this is not"
             " possible, then consider disabling the privileged intents instead."
         )
-        super().__init__(msg % shard_id)
+        super().__init__(msg % (shard_id, LOLKA_WEB))
 
 
 class InteractionResponded(ClientException):

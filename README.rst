@@ -64,6 +64,11 @@ so set them before ``import lolka``:
 - ``LOLKA_API_BASE`` — REST API base URL (default ``https://lolka.app/api/bot``)
 - ``LOLKA_GATEWAY`` — Gateway URL (default ``wss://lolka.app/ws/bot``)
 - ``LOLKA_CDN`` — CDN base URL for asset links (default ``https://cdn.lolka.app``)
+- ``LOLKA_WEB`` — web client URL used for jump links and the bot authorize URL (default ``https://lolka.app``)
+- ``LOLKA_INVITE`` — short invite URL base (default ``https://lolka.gg``)
+
+The Lolka CDN does not resize or convert images (webp only), so ``with_size``, ``with_format``
+and ``replace`` on assets validate their arguments but never change the URL.
 
 Voice
 -----

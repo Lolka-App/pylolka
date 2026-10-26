@@ -27,6 +27,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Callable, Iterable
 
+from . import utils
 from .abc import Messageable, _purge_messages_helper
 from .enums import (
     ChannelType,
@@ -288,7 +289,7 @@ class Thread(Messageable, Hashable):
 
         .. versionadded:: 2.0
         """
-        return f"https://discord.com/channels/{self.guild.id}/{self.id}"
+        return f"{utils.LOLKA_WEB}/servers/{self.guild.id}/channels/{self.id}"
 
     @property
     def members(self) -> list[ThreadMember]:

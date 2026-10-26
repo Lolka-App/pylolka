@@ -245,10 +245,7 @@ class PartialEmoji(_EmojiTag, AssetMixin):
         if self.is_unicode_emoji():
             return ""
 
-        url = f"{Asset.BASE}/emojis/{self.id}.{self.extension}"
-        if self.animated:
-            url += "?animated=true"
-        return url
+        return f"{Asset.BASE}/emojis/{self.id}.webp"
 
     @property
     def extension(self) -> Literal["webp", "png"]:
@@ -256,7 +253,7 @@ class PartialEmoji(_EmojiTag, AssetMixin):
 
         .. versionadded:: 2.7.1
         """
-        return "webp" if self.animated else "png"
+        return "webp"
 
     async def read(self) -> bytes:
         if self.is_unicode_emoji():
